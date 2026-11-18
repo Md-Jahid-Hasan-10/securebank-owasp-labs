@@ -176,15 +176,31 @@ if should_run 3; then
   check "a loopback address is refused" "$OUT6" '"error":"Callback URL is not allowed"'
 fi
 
-# --- Lab 4: debug / stack trace ---------------------------------------------
+# --- Lab 4: debug / stack trace (FIXED on this branch) -----------------------
 if should_run 4; then
   lab 4 "Debug mode exposes config"
-  OUT="$(curl -s "$API/api/a02/debug")"
-  check "debug endpoint returns the JWT secret" "$OUT" '"jwt.secret":"secret"'
-  check "debug endpoint returns the datasource URL" "$OUT" 'jdbc:postgresql'
-  OUT2="$(curl -s "$API/api/a02/debug/boom")"
-  check "unhandled error returns a stack trace" "$OUT2" 'Exception'
-  check "the error response repeats the JWT secret" "$OUT2" '"jwt.secret":"secret"'
+  # The endpoint is no longer public, so an anonymous caller is refused outright.
+  OUT="$(curl -s -o /dev/null -w '%{http_code}' "$API/api/a02/debug")"
+  check "the debug endpoint requires authentication" "$OUT" '401'
+  # A customer is refused by the role check.
+  OUT="$(get "$API/api/a02/debug")"
+  check "a customer is refused by /debug" "$OUT" '"error":"Admin role required"'
+  # An admin gets in, but no secret is returned.
+  ADMIN_TOKEN4="$(login admin admin)"
+  OUT="$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN4" "$API/api/a02/debug")"
+  check "an admin can still reach /debug" "$OUT" '"debug":true'
+  refute "the JWT secret is not returned" "$OUT" '"jwt.secret"'
+  refute "the datasource URL is not returned" "$OUT" 'jdbc:postgresql'
+  refute "the datasource password is not returned" "$OUT" '"spring.datasource.password"'
+  # The deliberate failure now returns a generic message and no stack trace.
+  # The endpoint is no longer on the public-path allowlist, so it needs a token
+  # to reach the handler at all.
+  OUT2="$(get "$API/api/a02/debug/boom")"
+  check "the error response is a generic message" "$OUT2" '"error":"Internal server error"'
+  check "the error response carries a correlation id" "$OUT2" '"correlation_id"'
+  refute "no stack trace is returned" "$OUT2" '"trace"'
+  refute "the error response does not repeat the JWT secret" "$OUT2" '"jwt.secret"'
+  refute "the error response does not leak the configuration" "$OUT2" '"config"'
 fi
 
 # --- Lab 5: default admin credentials ---------------------------------------
@@ -467,12 +483,13 @@ if should_run 22; then
   rm -f "$TMPFILE"
 fi
 
-# --- Lab 23: verbose error --------------------------------------------------
+# --- Lab 23: verbose error (the global handler no longer leaks) -------------
 if should_run 23; then
   lab 23 "Verbose error with stack trace"
   OUT="$(curl -s "$API/api/a10/transfers/account-summary?id=abc")"
-  check "a stack trace is returned to the client" "$OUT" 'NumberFormatException'
-  check "the trace names the internal parameter" "$OUT" 'account-summary'
+  refute "no stack trace is returned to the client" "$OUT" 'NumberFormatException'
+  refute "the internal call chain is not exposed" "$OUT" '"trace"'
+  refute "the configuration is not leaked with the error" "$OUT" '"jwt.secret"'
 fi
 
 # --- Lab 24: type coercion --------------------------------------------------

@@ -4,9 +4,12 @@ import java.io.PrintWriter;
 import java.io.StringWriter;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.env.Environment;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -34,54 +37,28 @@ public class Lab4ErrorController {
     public Lab4ErrorController(Environment environment) {
         this.environment = environment;
     }
-
+    private static final Logger log = LoggerFactory.getLogger(Lab4ErrorController.class);
     /**
      * Renders every unhandled exception as a verbose JSON error.
      */
     @ExceptionHandler(Exception.class)
     public ResponseEntity<?> handle(Exception e, HttpServletRequest request) {
-        StringWriter sw = new StringWriter();
-        e.printStackTrace(new PrintWriter(sw));
+        // FIXED: [A02-Lab4] ...
+        String correlationId = UUID.randomUUID().toString();
+
+        // The detail goes to the server log, never to the client.
+        log.error("unhandled exception [{}] on {} {}", correlationId, request.getMethod(), request.getRequestURI(), e);
 
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("error", e.getClass().getName());
-        body.put("message", e.getMessage());
-
-        // VULN: [A02-Lab4] Security Misconfiguration / Information Disclosure - the
-        // error response names the request URI and the handler that failed, which
-        // maps the application's internal structure for an attacker.
-        // FIX:  return a correlation id and a generic message; log the detail
-        //       server-side only.
-        body.put("path", request.getRequestURI());
-        body.put("method", request.getMethod());
-
-        // VULN: [A10-Lab23] Mishandling of Exceptional Conditions - the full stack
-        // trace is returned to the client. It exposes file paths, third-party library
-        // versions, the internal call chain and the names of internal variables.
-        // FIX:  set server.error.include-stacktrace=never and log the trace instead.
-        body.put("trace", sw.toString());
-
-        // VULN: [A02-Lab4] the debug snapshot repeats the configuration disclosure of
-        // Lab4DebugController on every error, so an attacker does not even need to
-        // find /api/a02/debug - any 500 hands over the JWT signing secret.
-        // FIX:  never include configuration values in an error response.
-        body.put("debug", true);
-        body.put("config", debugSnapshot());
+        body.put("error", "Internal server error");
+        body.put("correlation_id", correlationId);
 
         return ResponseEntity.status(500).body(body);
+
     }
 
     /**
      * The configuration snapshot leaked alongside the error.
      */
-    private Map<String, Object> debugSnapshot() {
-        Map<String, Object> config = new LinkedHashMap<>();
-        config.put("server.error.include-stacktrace",
-                environment.getProperty("server.error.include-stacktrace"));
-        config.put("jwt.secret", environment.getProperty("jwt.secret"));
-        config.put("spring.datasource.url", environment.getProperty("spring.datasource.url"));
-        config.put("spring.datasource.username", environment.getProperty("spring.datasource.username"));
-        config.put("spring.datasource.password", environment.getProperty("spring.datasource.password"));
-        return config;
-    }
+
 }

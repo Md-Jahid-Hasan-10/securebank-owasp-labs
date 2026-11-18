@@ -57,11 +57,11 @@ check "SSRF to the metadata address is refused" \
      -d '{"account_id":1,"callback_url":"http://169.254.169.254/latest/meta-data/"}' \
      "$API/api/a01/accounts/statement-email")" '"error":"Callback URL is not allowed"'
 
-echo "== Lab 4: debug =="
-check "GET /api/a02/debug leaks jwt.secret" \
-  "$(curl -s "$API/api/a02/debug")" '"jwt.secret":"secret"'
-check "GET /api/a02/debug/boom returns a stack trace" \
-  "$(curl -s "$API/api/a02/debug/boom")" 'Exception'
+echo "== Lab 4: debug (fixed on this branch) =="
+check "GET /api/a02/debug does not leak jwt.secret" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a02/debug")" '"error":"Admin role required"'
+check "GET /api/a02/debug/boom returns a generic message" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a02/debug/boom")" '"error":"Internal server error"'
 
 echo "== Lab 5: default admin =="
 check "admin/admin logs into the admin console" \
@@ -194,11 +194,9 @@ check "the uploaded file is served back" \
   "$(curl -s "$API/uploads/$(basename "$TMP")")" 'SHELL_HERE'
 rm -f "$TMP"
 
-echo "== Lab 23: verbose error =="
-check "a stack trace is returned" \
-  "$(curl -s "$API/api/a10/transfers/account-summary?id=abc")" 'NumberFormatException'
-check "the trace names the endpoint" \
-  "$(curl -s "$API/api/a10/transfers/account-summary?id=abc")" 'account-summary'
+echo "== Lab 23: verbose error (no stack trace on this branch) =="
+check "the error response is a generic message" \
+  "$(curl -s "$API/api/a10/transfers/account-summary?id=abc")" '"error"'
 
 echo "== Lab 24: type coercion =="
 check "the amount parameter is named" \

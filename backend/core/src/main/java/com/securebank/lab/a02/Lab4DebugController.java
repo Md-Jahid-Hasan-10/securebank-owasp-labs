@@ -1,9 +1,13 @@
 package com.securebank.lab.a02;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import com.securebank.core.security.CurrentUser;
+import com.securebank.core.security.CurrentUserHolder;
 import org.springframework.core.env.Environment;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -29,33 +33,40 @@ public class Lab4DebugController {
     }
 
     /**
-     * Prints the resolved application configuration.
+     * Prints a snapshot of the resolved application configuration.
      */
     @GetMapping("/debug")
     public ResponseEntity<?> debug() {
+        CurrentUser caller = CurrentUserHolder.get();
+
+        // FIXED: [A02-Lab4] Security Misconfiguration / Information Disclosure - the
+        // endpoint used to dump the entire resolved application configuration to any
+        // caller, including the JWT signing secret and the database connection
+        // string. Combined with server.error.include-stacktrace=always (which made
+        // every unhandled error equally verbose) this handed an attacker the keys to
+        // the whole application: the secret from Lab 8 forges tokens, and the
+        // datasource URL points at the database that Lab 6 also dumps.
+        // NOW: the endpoint requires the admin role, and it never returns a secret.
+        //       jwt.secret and the datasource credentials are gone from the response
+        //       entirely - no secret should ever travel in an HTTP response, not
+        //       even to an administrator.
+        if (caller == null || !caller.isAdmin()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Admin role required"));
+        }
+
         Map<String, Object> config = new LinkedHashMap<>();
 
-        // VULN: [A02-Lab4] Security Misconfiguration / Information Disclosure - a debug
-        // endpoint dumps the entire resolved application configuration, including the
-        // JWT signing secret and the database connection string. Combined with
-        // server.error.include-stacktrace=always (which makes every unhandled error
-        // equally verbose) this hands an attacker the keys to the whole application:
-        // the secret from Lab 8 forges tokens, the datasource URL points at the database
-        // that Lab 6 also dumps.
-        // FIX:  remove the endpoint entirely, or gate it behind a build profile that
-        //       can never be active in production. Never return secrets from an HTTP
-        //       response, and set server.error.include-stacktrace=never.
+        // Only non-secret diagnostics. The signing secret and the datasource
+        // credentials are deliberately absent.
         config.put("server.error.include-stacktrace", environment.getProperty("server.error.include-stacktrace"));
-        config.put("jwt.secret", environment.getProperty("jwt.secret"));
         config.put("jwt.expiration-seconds", environment.getProperty("jwt.expiration-seconds"));
-        config.put("spring.datasource.url", environment.getProperty("spring.datasource.url"));
-        config.put("spring.datasource.username", environment.getProperty("spring.datasource.username"));
-        config.put("spring.datasource.password", environment.getProperty("spring.datasource.password"));
         config.put("spring.jackson.default-typing", environment.getProperty("spring.jackson.default-typing"));
 
         Map<String, Object> response = new LinkedHashMap<>();
         response.put("debug", true);
-        response.put("active_profiles", java.util.List.of(environment.getActiveProfiles()));
+        response.put("requested_by", caller.getUsername());
+        response.put("active_profiles", List.of(environment.getActiveProfiles()));
         response.put("config", config);
 
         return ResponseEntity.ok(response);
@@ -64,20 +75,30 @@ public class Lab4DebugController {
     /**
      * Deliberately throws so that the verbose error handler renders.
      *
-     * <p>VULN: [A02-Lab4] Security Misconfiguration - the endpoint is reachable
-     * without authentication and the resulting 500 response is rendered by
-     * {@link Lab4ErrorController}, which returns the full stack trace and a
-     * configuration snapshot.</p>
-     *
-     * <p>FIX:  return a generic error and log the detail server-side. A production
-     * application must never render a stack trace or a configuration dump to an
-     * unauthenticated caller.</p>
+     * <p>FIXED: [A02-Lab4] Security Misconfiguration - the endpoint used to be
+     * reachable without authentication and the resulting 500 response was rendered
+     * by {@link Lab4ErrorController}, which returned the full stack trace and a
+     * configuration snapshot. The exception is now handled locally and only a
+     * generic message is returned.</p>
      */
     @GetMapping("/debug/boom")
     public ResponseEntity<?> boom() {
-        // VULN: [A02-Lab4] an unhandled exception on an unauthenticated endpoint
-        // produces the verbose error page.
-        // FIX:  handle the exception and return a sanitised response.
-        throw new IllegalStateException("Debug endpoint triggered a deliberate failure");
+        // FIXED: [A02-Lab4] an unhandled exception on an unauthenticated endpoint
+        // produced the verbose error page. The exception is caught here, logged
+        // server-side, and reported to the caller as a generic message with a
+        // correlation id.
+        try {
+            throw new IllegalStateException("Debug endpoint triggered a deliberate failure");
+        } catch (IllegalStateException e) {
+            String correlationId = java.util.UUID.randomUUID().toString();
+
+            org.slf4j.LoggerFactory.getLogger(Lab4DebugController.class)
+                    .error("deliberate failure [{}] on /api/a02/debug/boom", correlationId, e);
+
+            return ResponseEntity.status(500).body(Map.of(
+                    "error", "Internal server error",
+                    "correlation_id", correlationId));
+        }
     }
+
 }

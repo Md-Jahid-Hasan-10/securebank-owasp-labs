@@ -51,7 +51,6 @@ public class AuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/a07/auth/")
                 || path.startsWith("/api/a07/session/")
                 || path.startsWith("/api/labs")
-                || path.startsWith("/api/a02/debug")
                 || path.startsWith("/api/a02/admin/login")
                 || path.startsWith("/api/a02/exposed-files")
                 || path.startsWith("/api/a10/transfers/account-summary")
