@@ -145,19 +145,58 @@ labs:
            -d '{"account_id": 1, "callback_url": "http://report:8081/"}'
          ```
     hint: >-
-      What happens to the `callback_url` value between it arriving in the JSON body and
-      the HTTP request being made?
+      This lab is FIXED on the `fixed` branch. Compare it with `main` to see the
+      original flaw:
+      `git diff main fixed -- backend/core/src/main/java/com/securebank/lab/a01/`
     fix: >-
-      Validate the URL before fetching it: resolve the hostname, reject private,
-      loopback, link-local and metadata address ranges, and allow only an explicit
-      allowlist of hosts:
+      The URL is validated in three layers before any request is made.
+
+      **Layer 1 - scheme allowlist.** Only `http` and `https` are accepted, so
+      `file://`, `gopher://` and `jar:` cannot be used to read local files or
+      speak other protocols:
 
       ```java
-      URI uri = URI.create(callbackUrl);
-      if (!ALLOWED_HOSTS.contains(uri.getHost())) {
-          return ResponseEntity.badRequest().body(Map.of("error", "Unsupported callback host"));
+      String scheme = uri.getScheme();
+      if (scheme == null
+              || !(scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+          return notAllowed();
       }
       ```
+
+      **Layer 2 - host allowlist.** Only hosts the application actually needs are
+      fetchable:
+
+      ```java
+      private static final Set<String> ALLOWED_HOSTS = Set.of("report");
+      ```
+
+      **Layer 3 - resolved address check.** The allowlist alone is not enough,
+      because a hostname can resolve to an address the attacker controls. So the
+      host is resolved and *every* address it resolves to is checked - not just
+      the first, or the attacker controls the ordering:
+
+      ```java
+      for (InetAddress address : InetAddress.getAllByName(host)) {
+          if (isBlocked(address)) {
+              return notAllowed();
+          }
+      }
+      ```
+
+      with `isBlocked` covering loopback (`127.0.0.0/8`, `::1`), link-local
+      (`169.254.0.0/16` - this is the cloud metadata range), site-local
+      (`10/8`, `172.16/12`, `192.168/16`), `0.0.0.0` and IPv6 unique-local
+      (`fc00::/7`).
+
+      **And redirects are never followed**, or an allowed host could answer with
+      a `302` pointing at an internal address and bypass all of the above:
+
+      ```java
+      .followRedirects(HttpClient.Redirect.NEVER)
+      ```
+
+      Every rejection returns the same generic message, so the response does not
+      reveal whether the guess hit something real.
     source: core/src/main/java/com/securebank/lab/a01/Lab3SsrfController.java
     anchors:
       - "HttpResponse<String> response = client.send("

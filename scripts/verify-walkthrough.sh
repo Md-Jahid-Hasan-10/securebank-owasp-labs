@@ -47,15 +47,15 @@ echo "== Lab 2: privilege escalation (fixed on this branch) =="
 check "GET /api/a01/admin/users is refused for a customer" \
   "$(curl -s "${AUTH[@]}" "$API/api/a01/admin/users")" '"error":"Admin role required"'
 
-echo "== Lab 3: SSRF =="
-check "SSRF to the internal report service" \
+echo "== Lab 3: SSRF (fixed on this branch) =="
+check "SSRF to the internal report service is refused" \
   "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
      -d '{"account_id":1,"callback_url":"http://report:8081/api/report/report/generate"}' \
-     "$API/api/a01/accounts/statement-email")" '"status"'
-check "SSRF to the metadata address reports sent_to" \
+     "$API/api/a01/accounts/statement-email")" '"error":"Callback URL is not allowed"'
+check "SSRF to the metadata address is refused" \
   "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
      -d '{"account_id":1,"callback_url":"http://169.254.169.254/latest/meta-data/"}' \
-     "$API/api/a01/accounts/statement-email")" '"sent_to"'
+     "$API/api/a01/accounts/statement-email")" '"error":"Callback URL is not allowed"'
 
 echo "== Lab 4: debug =="
 check "GET /api/a02/debug leaks jwt.secret" \

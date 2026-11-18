@@ -145,20 +145,35 @@ if should_run 2; then
   check "an admin token still works" "$OUT" '"username":"admin"'
 fi
 
-# --- Lab 3: SSRF ------------------------------------------------------------
+# --- Lab 3: SSRF (FIXED on this branch) -------------------------------------
 if should_run 3; then
   lab 3 "SSRF"
+  # The internal report service is only reachable by name on the Docker network,
+  # so a successful fetch of it would prove the request came from inside.
   OUT="$(post "$API/api/a01/accounts/statement-email" \
     -d '{"account_id": 1, "callback_url": "http://report:8081/"}')"
-  check "server fetched the internal report service" "$OUT" '"status"'
+  check "the internal report service is refused" "$OUT" '"error":"Callback URL is not allowed"'
+  refute "no internal response body is returned" "$OUT" '"body"'
+  refute "the target is not echoed back" "$OUT" '"sent_to"'
   OUT2="$(post "$API/api/a01/accounts/statement-email" \
     -d '{"account_id": 1, "callback_url": "http://169.254.169.254/latest/meta-data/"}')"
-  check "server attempted the cloud metadata address" "$OUT2" '"sent_to"'
-  # The report service is only reachable by name on the Docker network, so a
-  # successful fetch of it proves the request came from inside the network.
+  check "the cloud metadata address is refused" "$OUT2" '"error":"Callback URL is not allowed"'
+  refute "the metadata attempt is not echoed back" "$OUT2" '"sent_to"'
   OUT3="$(post "$API/api/a01/accounts/statement-email" \
     -d '{"account_id": 1, "callback_url": "http://report:8081/api/report/report/generate"}')"
-  check "server reached an internal-only service by Docker DNS name" "$OUT3" '"status"'
+  check "the SSTI pivot target is refused too" "$OUT3" '"error":"Callback URL is not allowed"'
+  # Layer 1 - only http and https are accepted.
+  OUT4="$(post "$API/api/a01/accounts/statement-email" \
+    -d '{"account_id": 1, "callback_url": "file:///etc/passwd"}')"
+  check "a non-http scheme is refused" "$OUT4" '"error":"Callback URL is not allowed"'
+  # Layer 3 - the host allowlist rejects a public host that is not on it.
+  OUT5="$(post "$API/api/a01/accounts/statement-email" \
+    -d '{"account_id": 1, "callback_url": "http://example.com/"}')"
+  check "a host that is not on the allowlist is refused" "$OUT5" '"error":"Callback URL is not allowed"'
+  # Layer 3 - loopback is blocked even when the host resolves to it.
+  OUT6="$(post "$API/api/a01/accounts/statement-email" \
+    -d '{"account_id": 1, "callback_url": "http://127.0.0.1:8080/api/labs"}')"
+  check "a loopback address is refused" "$OUT6" '"error":"Callback URL is not allowed"'
 fi
 
 # --- Lab 4: debug / stack trace ---------------------------------------------
