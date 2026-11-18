@@ -66,6 +66,37 @@ login() {
     | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null
 }
 
+# FIXED: [A02-Lab5] the seeded administrator is flagged for a mandatory password
+# change, so it cannot log in until the password is replaced. The script unlocks
+# it, so the labs that need an admin token (Labs 2 and 4) still work. The unlock
+# goes through the password endpoint, which proves identity with the current
+# password rather than with a session - an admin that cannot log in yet could
+# never clear the flag otherwise.
+#
+# The request body uses snake_case keys because the application sets
+# spring.jackson.property-naming-strategy=SNAKE_CASE, and the password avoids
+# characters that would need JSON escaping.
+admin_password="CorrectHorse9BatteryStaple"
+
+unlock_admin() {
+  # The account may still hold the factory password (fresh database) or the
+  # password from a previous run, so try both.
+  local current out
+  for current in "admin" "$admin_password"; do
+    out="$(curl -s -X POST "$API/api/a02/admin/password" \
+      -H "Content-Type: application/json" \
+      -d "{\"username\":\"admin\",\"current_password\":\"$current\",\"new_password\":\"$admin_password\"}")"
+    [[ "$out" == *'"updated":true'* ]] && return 0
+  done
+  return 1
+}
+
+admin_login() {
+  # The admin console login needs the account unlocked first.
+  unlock_admin >/dev/null 2>&1
+  login admin "$admin_password"
+}
+
 bold "SecureBank Labs — vulnerability verification"
 echo "API: $API   Report: $REPORT   Frontend: $FRONTEND"
 echo
@@ -140,7 +171,7 @@ if should_run 2; then
   OUT="$(get "$API/api/a01/admin/accounts")"
   check "a customer is refused by /admin/accounts too" "$OUT" '"error":"Admin role required"'
   refute "no account balances are disclosed" "$OUT" '"balance"'
-  ADMIN_TOKEN="$(login admin admin)"
+  ADMIN_TOKEN="$(admin_login)"
   OUT="$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$API/api/a01/admin/users")"
   check "an admin token still works" "$OUT" '"username":"admin"'
 fi
@@ -186,7 +217,7 @@ if should_run 4; then
   OUT="$(get "$API/api/a02/debug")"
   check "a customer is refused by /debug" "$OUT" '"error":"Admin role required"'
   # An admin gets in, but no secret is returned.
-  ADMIN_TOKEN4="$(login admin admin)"
+  ADMIN_TOKEN4="$(admin_login)"
   OUT="$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN4" "$API/api/a02/debug")"
   check "an admin can still reach /debug" "$OUT" '"debug":true'
   refute "the JWT secret is not returned" "$OUT" '"jwt.secret"'
@@ -203,17 +234,46 @@ if should_run 4; then
   refute "the error response does not leak the configuration" "$OUT2" '"config"'
 fi
 
-# --- Lab 5: default admin credentials ---------------------------------------
+# --- Lab 5: default admin credentials (FIXED on this branch) ----------------
 if should_run 5; then
   lab 5 "Default admin credentials"
-  ADMIN_TOKEN="$(login admin admin)"
+  # The seeded administrator is refused the factory password. Its password may
+  # already have been changed by an earlier run of this script, so the
+  # assertion is that no session comes back, not which error is returned.
+  OUT="$(curl -s -X POST "$API/api/a02/admin/login" -H "Content-Type: application/json" \
+    -d '{"username":"admin","password":"admin"}')"
+  refute "the factory password does not open the admin console" "$OUT" '"token"'
+  OUT="$(curl -s -X POST "$API/api/auth/login" -H "Content-Type: application/json" \
+    -d '{"username":"admin","password":"admin"}')"
+  refute "the factory password does not open the main login path" "$OUT" '"token"'
+  # Only an administrator may create another administrator.
+  CUSTOMER_TOKEN="$(login alice password123)"
+  OUT="$(curl -s -X POST "$API/api/a02/admin/users" \
+    -H "Authorization: Bearer $CUSTOMER_TOKEN" -H "Content-Type: application/json" \
+    -d '{"username":"sneakyadmin","email":"sneaky@bank.com","password":"sneaky123"}')"
+  check "a customer cannot create an administrator" "$OUT" '"error":"Admin role required"'
+  refute "no account is created" "$OUT" '"created":true'
+  # An administrator can still create one, and the new account is flagged for a
+  # mandatory password change. The username is unique per run so a second run
+  # does not trip over the account the first one left behind.
+  ADMIN_TOKEN="$(admin_login)"
   if [[ -z "$ADMIN_TOKEN" ]]; then
-    red "admin/admin login failed"
+    red "an admin with a changed password cannot sign in"
     FAIL=$((FAIL + 1))
   else
-    green "admin/admin signs in to the admin API"
+    green "an admin with a changed password can sign in"
     PASS=$((PASS + 1))
   fi
+  NEW_ADMIN="newadmin$$"
+  OUT="$(curl -s -X POST "$API/api/a02/admin/users" \
+    -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+    -d "{\"username\":\"$NEW_ADMIN\",\"email\":\"newadmin@bank.com\",\"password\":\"newadmin123\"}")"
+  check "an administrator can still create an administrator" "$OUT" '"created":true'
+  OUT="$(curl -s -X POST "$API/api/a02/admin/login" -H "Content-Type: application/json" \
+    -d "{\"username\":\"$NEW_ADMIN\",\"password\":\"newadmin123\"}")"
+  check "the new administrator must also change its password" \
+    "$OUT" '"error":"Password must be changed before this account can be used"'
+  refute "no session is issued to the new administrator" "$OUT" '"token"'
 fi
 
 # --- Lab 6: exposed files ----------------------------------------------------
@@ -272,7 +332,11 @@ if should_run 10; then
   check "login bypass with admin' --" "$OUT" '"token"'
   check "bypass returned the admin account" "$OUT" '"role":"admin"'
   OUT="$(get "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")"
-  check "UNION SELECT dumps the users table" "$OUT" '"count":4'
+  # The row count grows with every account in the database, so assert on the
+  # seeded accounts rather than on a fixed number.
+  check "UNION SELECT dumps the seeded users" "$OUT" '"username":"alice"'
+  check "UNION SELECT dumps the administrator too" "$OUT" '"username":"admin"'
+  check "UNION SELECT exposes the password hashes" "$OUT" '"password_hash"'
 fi
 
 # --- Lab 11: SSTI via SpEL --------------------------------------------------

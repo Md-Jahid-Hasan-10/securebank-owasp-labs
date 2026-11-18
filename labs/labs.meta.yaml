@@ -289,9 +289,14 @@ labs:
       4. Create a new admin user via the UI — this demonstrates persistence.
     hint: >-
       The seed data always ships one admin account. What password does it use?
+      Now that the password has been changed, try the old one on both the admin
+      console and the main login path - neither accepts it any more.
     fix: >-
-      Use strong, unique admin credentials stored in a secret manager, restrict the
-      admin console to an internal network, and disable it entirely in production.
+      The seeded administrator is flagged must_change_password and is refused by
+      both login paths until its password is replaced, so the factory password is
+      never a working credential. New administrator accounts can only be created by
+      an authenticated administrator, and they are flagged the same way. Provision
+      real admin accounts from a secret manager with generated passwords instead.
     source: core/src/main/java/com/securebank/lab/a02/Lab5DefaultAdminController.java
     anchors:
       - "public ResponseEntity<?> login("

@@ -5,6 +5,7 @@ import java.util.Map;
 import com.securebank.core.user.PasswordService;
 import com.securebank.core.user.User;
 import com.securebank.core.user.UserRepository;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -40,6 +41,17 @@ public class AuthController {
 
         if (user == null || !PasswordService.matches(request.password(), user.getPasswordHash())) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
+        }
+
+        // FIXED: [A02-Lab5] Default Credentials - this login path used to accept the
+        // seeded factory password, so blocking it only on the admin console would
+        // have left the default credential working everywhere else.
+        // NOW: an account flagged for a mandatory password change cannot log in
+        //       until the password has been replaced.
+        if (user.mustChangePassword()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(
+                    "error", "Password must be changed before this account can be used",
+                    "must_change_password", true));
         }
 
         String token = jwtService.issue(user.getId(), user.getUsername(), user.getRole());

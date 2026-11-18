@@ -15,12 +15,13 @@ public class User {
     private String role;
     private String fullName;
     private String sortCode;
+    private Boolean mustChangePassword;
 
     public User() {
     }
 
     public User(Long id, String username, String email, String passwordHash, String role,
-                String fullName, String sortCode) {
+                String fullName, String sortCode, Boolean mustChangePassword) {
         this.id = id;
         this.username = username;
         this.email = email;
@@ -28,6 +29,7 @@ public class User {
         this.role = role;
         this.fullName = fullName;
         this.sortCode = sortCode;
+        this.mustChangePassword = mustChangePassword;
     }
 
     public Long getId() {
@@ -84,6 +86,24 @@ public class User {
 
     public void setSortCode(String sortCode) {
         this.sortCode = sortCode;
+    }
+    /**
+     * Whether this account still has to replace its password before it can be used.
+     *
+     * <p>FIXED: [A02-Lab5] a seeded administrator whose password is still the factory
+     * default is flagged here and cannot be logged in with until the password is
+     * changed.</p>
+     */
+    public boolean mustChangePassword() {
+        return Boolean.TRUE.equals(mustChangePassword);
+    }
+
+    public Boolean getMustChangePassword() {
+        return mustChangePassword;
+    }
+
+    public void setMustChangePassword(Boolean mustChangePassword) {
+        this.mustChangePassword = mustChangePassword;
     }
 
     public boolean isAdmin() {

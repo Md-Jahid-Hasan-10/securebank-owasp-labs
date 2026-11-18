@@ -18,7 +18,8 @@ public class UserRepository {
             rs.getString("password_hash"),
             rs.getString("role"),
             rs.getString("full_name"),
-            rs.getString("sort_code"));
+            rs.getString("sort_code"),
+            rs.getBoolean("must_change_password"));
 
     private final JdbcTemplate jdbc;
 
@@ -28,7 +29,7 @@ public class UserRepository {
 
     public Optional<User> findByUsername(String username) {
         List<User> found = jdbc.query(
-                "SELECT id, username, email, password_hash, role, full_name, sort_code "
+                "SELECT id, username, email, password_hash, role, full_name, sort_code, must_change_password "
                         + "FROM users WHERE username = ?",
                 MAPPER, username);
         return found.stream().findFirst();
@@ -36,7 +37,7 @@ public class UserRepository {
 
     public Optional<User> findById(Long id) {
         List<User> found = jdbc.query(
-                "SELECT id, username, email, password_hash, role, full_name, sort_code "
+                "SELECT id, username, email, password_hash, role, full_name, sort_code, must_change_password "
                         + "FROM users WHERE id = ?",
                 MAPPER, id);
         return found.stream().findFirst();
@@ -44,7 +45,7 @@ public class UserRepository {
 
     public List<User> findAll() {
         return jdbc.query(
-                "SELECT id, username, email, password_hash, role, full_name, sort_code "
+                "SELECT id, username, email, password_hash, role, full_name, sort_code, must_change_password "
                         + "FROM users ORDER BY id",
                 MAPPER);
     }
@@ -57,6 +58,16 @@ public class UserRepository {
     public void updatePasswordHash(Long id, String passwordHash) {
         jdbc.update("UPDATE users SET password_hash = ? WHERE id = ?", passwordHash, id);
     }
+    /**
+     * Clears the mandatory-password-change flag once the password has been replaced.
+     *
+     * <p>FIXED: [A02-Lab5] the flag is what stops the seeded factory password from
+     * being a permanent way in, so it must be cleared as soon as a real password is
+     * set - and only then.</p>
+     */
+    public void clearMustChangePassword(Long id) {
+        jdbc.update("UPDATE users SET must_change_password = FALSE WHERE id = ?", id);
+    }
 
     /**
      * Inserts a new user and returns its generated id.
@@ -66,8 +77,8 @@ public class UserRepository {
                 new org.springframework.jdbc.support.GeneratedKeyHolder();
         jdbc.update(conn -> {
             var ps = conn.prepareStatement(
-                    "INSERT INTO users (username, email, password_hash, role, full_name, sort_code) "
-                            + "VALUES (?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO users (username, email, password_hash, role, full_name, sort_code, must_change_password) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?)",
                     new String[] { "id" });
             ps.setString(1, (String) values.get("username"));
             ps.setString(2, (String) values.get("email"));
@@ -75,6 +86,7 @@ public class UserRepository {
             ps.setString(4, (String) values.getOrDefault("role", "customer"));
             ps.setString(5, (String) values.get("full_name"));
             ps.setString(6, (String) values.get("sort_code"));
+            ps.setBoolean(7, Boolean.TRUE.equals(values.get("must_change_password")));
             return ps;
         }, keyHolder);
         return keyHolder.getKey().longValue();

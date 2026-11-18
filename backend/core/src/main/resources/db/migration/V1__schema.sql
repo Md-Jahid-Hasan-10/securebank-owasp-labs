@@ -2,14 +2,17 @@
 -- Intentionally vulnerable training target. Passwords are stored as unsalted MD5 (Lab 7).
 
 CREATE TABLE users (
-    id              BIGSERIAL PRIMARY KEY,
-    username        VARCHAR(64)  NOT NULL UNIQUE,
-    email           VARCHAR(255) NOT NULL,
-    password_hash   VARCHAR(64)  NOT NULL,   -- VULN: [A04-Lab7] unsalted MD5 hex
-    role            VARCHAR(32)  NOT NULL DEFAULT 'customer',
-    full_name       VARCHAR(255),
-    sort_code       VARCHAR(8),
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
+                       id              BIGSERIAL PRIMARY KEY,
+                       username        VARCHAR(64)  NOT NULL UNIQUE,
+                       email           VARCHAR(255) NOT NULL,
+                       password_hash   VARCHAR(64)  NOT NULL,   -- VULN: [A04-Lab7] unsalted MD5 hex
+                       role            VARCHAR(32)  NOT NULL DEFAULT 'customer',
+                       full_name       VARCHAR(255),
+                       sort_code       VARCHAR(8),
+    -- FIXED: [A02-Lab5] an account flagged here must replace its password before
+    -- it can be used, so a seeded factory password is never a permanent way in.
+                       must_change_password BOOLEAN     NOT NULL DEFAULT FALSE,
+                       created_at      TIMESTAMPTZ  NOT NULL DEFAULT now()
 );
 
 CREATE TABLE accounts (

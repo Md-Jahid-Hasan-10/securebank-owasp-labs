@@ -52,6 +52,11 @@ public class AuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/api/a07/session/")
                 || path.startsWith("/api/labs")
                 || path.startsWith("/api/a02/admin/login")
+                // FIXED: [A02-Lab5] the password-change endpoint has to be reachable
+                // without a session: the seeded administrator is refused a session
+                // until its password is changed, so it could never clear the flag.
+                // Identity is proven by the current password instead of a token.
+                || path.startsWith("/api/a02/admin/password")
                 || path.startsWith("/api/a02/exposed-files")
                 || path.startsWith("/api/a10/transfers/account-summary")
                 || path.startsWith("/api/report/")
