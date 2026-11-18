@@ -1,10 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { api } from '../../api/client'
 
 const ADMIN_TOKEN_KEY = 'securebank_admin_token'
 
 export default function AdminConsolePage() {
-  const [token, setToken] = useState(sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? '')
+  const [token, setToken] = useState(() => sessionStorage.getItem(ADMIN_TOKEN_KEY) ?? '')
   const [username, setUsername] = useState('admin')
   const [password, setPassword] = useState('admin')
   const [error, setError] = useState(null)
@@ -13,33 +13,35 @@ export default function AdminConsolePage() {
   const [newAdmin, setNewAdmin] = useState({ username: '', email: '', password: '' })
   const [notice, setNotice] = useState(null)
 
-  useEffect(() => {
-    if (!token) return
-    load()
-  }, [])
-
   // The admin console keeps its own token in sessionStorage. It must be passed
   // explicitly, otherwise the api() helper would also attach the customer's
   // token from localStorage and the request would be made as the customer.
-  function adminApi(path, options = {}) {
-    return api(path, { ...options, token })
-  }
+  const adminApi = useCallback(
+    (path, options = {}) => api(path, { ...options, token }),
+    [token],
+  )
 
-  function load() {
-    adminApi('/api/a02/admin/users')
-      .then((res) => {
-        if (res.ok) {
-          setData(res.data)
-          setError(null)
-        } else {
-          setError(res.data?.error ?? 'Could not load admin data')
-        }
-      })
-  }
+  const load = useCallback(async () => {
+    const res = await adminApi('/api/a02/admin/users')
+    if (res.ok) {
+      setData(res.data)
+      setError(null)
+    } else {
+      setError(res.data?.error ?? 'Could not load admin data')
+    }
+  }, [adminApi])
+
+  // Runs on mount and whenever the token changes, so a reload with a token
+  // already in sessionStorage restores the console straight away.
+  useEffect(() => {
+    if (!token) return
+    load()
+  }, [token, load])
 
   async function signIn(event) {
     event.preventDefault()
     setError(null)
+    setNotice(null)
 
     const res = await api('/api/a02/admin/login', {
       method: 'POST',
@@ -49,8 +51,6 @@ export default function AdminConsolePage() {
     if (res.ok && res.data?.token) {
       sessionStorage.setItem(ADMIN_TOKEN_KEY, res.data.token)
       setToken(res.data.token)
-      setNotice(null)
-      load()
     } else {
       setError(res.data?.error ?? 'Sign in failed')
     }
@@ -62,6 +62,7 @@ export default function AdminConsolePage() {
     setData(null)
     setError(null)
     setNotice(null)
+    setTab('users')
   }
 
   async function createAdmin(event) {
@@ -108,7 +109,7 @@ export default function AdminConsolePage() {
             />
           </label>
           {error && <p className="form-error">{error}</p>}
-          <button className="btn btn-primary">Sign in</button>
+          <button className="btn btn-primary" type="submit">Sign in</button>
         </form>
       )}
 
@@ -126,13 +127,14 @@ export default function AdminConsolePage() {
             ].map((entry) => (
               <button
                 key={entry.key}
+                type="button"
                 className={`tab${tab === entry.key ? ' active' : ''}`}
                 onClick={() => setTab(entry.key)}
               >
                 {entry.label}
               </button>
             ))}
-            <button className="btn" onClick={signOut}>
+            <button className="btn" type="button" onClick={signOut}>
               Sign out
             </button>
           </div>
@@ -162,6 +164,9 @@ export default function AdminConsolePage() {
                   ))}
                 </tbody>
               </table>
+              {(data?.users ?? []).length === 0 && !error && (
+                <p className="form-error">No users loaded. The request may have failed - try Sign out and back in.</p>
+              )}
             </>
           )}
 
@@ -196,7 +201,7 @@ export default function AdminConsolePage() {
                   autoComplete="new-password"
                 />
               </label>
-              <button className="btn btn-primary">Create administrator</button>
+              <button className="btn btn-primary" type="submit">Create administrator</button>
             </form>
           )}
         </>
@@ -207,13 +212,20 @@ export default function AdminConsolePage() {
 
 function AccountsPanel({ token }) {
   const [accounts, setAccounts] = useState(null)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     api('/api/a02/admin/accounts', { token }).then((res) => {
-      if (res.ok) setAccounts(res.data?.accounts ?? [])
+      if (res.ok) {
+        setAccounts(res.data?.accounts ?? [])
+        setError(null)
+      } else {
+        setError(res.data?.error ?? 'Could not load accounts')
+      }
     })
   }, [token])
 
+  if (error) return <p className="form-error">{error}</p>
   if (!accounts) return <div className="card">Loading accounts…</div>
 
   return (
@@ -247,13 +259,20 @@ function AccountsPanel({ token }) {
 
 function TransfersPanel({ token }) {
   const [transfers, setTransfers] = useState(null)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     api('/api/a02/admin/transfers', { token }).then((res) => {
-      if (res.ok) setTransfers(res.data?.transfers ?? [])
+      if (res.ok) {
+        setTransfers(res.data?.transfers ?? [])
+        setError(null)
+      } else {
+        setError(res.data?.error ?? 'Could not load transfers')
+      }
     })
   }, [token])
 
+  if (error) return <p className="form-error">{error}</p>
   if (!transfers) return <div className="card">Loading transfers…</div>
 
   return (

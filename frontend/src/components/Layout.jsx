@@ -3,6 +3,10 @@ import { NavLink, Outlet, useNavigate } from 'react-router-dom'
 import { api, clearToken, clearUser, getUser } from '../api/client'
 import Sidebar from './Sidebar'
 
+// Injected at build time by vite.config.js. Showing it in the top bar makes a
+// stale browser tab obvious: if the badge is old, hard-reload the page.
+const BUILD = typeof __APP_BUILD__ === 'undefined' ? 'dev' : __APP_BUILD__
+
 export default function Layout() {
   const [labs, setLabs] = useState({ categories: [], labs: [] })
   const [user, setUser] = useState(getUser())
@@ -30,6 +34,12 @@ export default function Layout() {
             <span className="brand-mark">SB</span>
             <span className="brand-name">SecureBank</span>
             <span className="brand-tag">Labs</span>
+            <span
+              className="build-tag"
+              title="UI build - if this looks old, hard-reload the page (Ctrl+Shift+R)"
+            >
+              {BUILD}
+            </span>
           </div>
           <div className="topbar-right">
             {user && (

@@ -59,6 +59,9 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        # Stamped into the bundle so the top bar shows which UI build is live.
+        APP_BUILD: "${APP_BUILD:-local}"
     ports:
       - "80:80"
     depends_on:

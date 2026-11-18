@@ -5,6 +5,11 @@ import react from '@vitejs/plugin-react'
 // runs Node 18.
 export default defineConfig({
   plugins: [react()],
+  define: {
+    // Bumped whenever the UI changes in a way the user must be able to see.
+    // The admin console prints it so a stale browser tab is obvious.
+    __APP_BUILD__: JSON.stringify(process.env.APP_BUILD ?? 'dev'),
+  },
   server: {
     host: '0.0.0.0',
     port: 5173,
