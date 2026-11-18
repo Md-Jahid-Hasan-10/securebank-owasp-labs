@@ -38,6 +38,9 @@ backend/core/src/main/resources/static/uploads/*
 # Regenerate with: python3 scripts/sync-labs.py
 backend/core/src/main/resources/labs/labs.json
 
-# NOTE: backend/core/src/main/resources/static/.git/ is intentionally NOT ignored.
-# It is a fixture for Lab 6 (sensitive file exposure) and the Dockerfile copies it
-# into the image's web root, so it has to be committed.
+# NOTE: the Lab 6 fixture (a fake .git directory) is NOT stored at
+# backend/core/src/main/resources/static/.git/ - git refuses to track any path
+# containing a ".git" component, even with "git add -f" or "git update-index".
+# It lives at backend/core/src/main/resources/lab-fixtures/git-config instead, and
+# the Dockerfile renames it to /app/static/.git/config inside the image, so the
+# served path is still /.git/config.

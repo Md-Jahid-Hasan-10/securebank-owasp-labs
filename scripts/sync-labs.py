@@ -38,7 +38,7 @@ OUT_PATH = BACKEND_DIR / "core" / "src" / "main" / "resources" / "labs" / "labs.
 # How many lines of context to include around the anchor.
 CONTEXT_LINES = 14
 
-VULN_MARKER = re.compile(r"VULN:\s*\[(?P<tag>[A-Z0-9\-]+)\]")
+VULN_MARKER = re.compile(r"(?:VULN|FIXED):\s*\[(?P<tag>[A-Z0-9\-]+)\]")
 
 
 def extract_block(source: str, anchor: str, context: int = CONTEXT_LINES) -> str:
@@ -54,14 +54,16 @@ def extract_block(source: str, anchor: str, context: int = CONTEXT_LINES) -> str
 
 
 def extract_vuln_block(source: str, tag: str, context: int = CONTEXT_LINES) -> str | None:
-    """Extract the block around this lab's own `// VULN: [tag]` marker.
+    """Extract the block around this lab's own marker.
 
-    Anchoring on the marker rather than on a hand-written line from the metadata
-    means the "Affected Code" tab always shows the vulnerable statement together
-    with the comment that names it, even when the surrounding code moves.
+    The marker is `// VULN: [tag]` on the training branch and `// FIXED: [tag]` on
+    the solution branch. Anchoring on the marker rather than on a hand-written line
+    from the metadata means the "Affected Code" tab always shows the vulnerable
+    statement together with the comment that names it, even when the surrounding
+    code moves.
     """
     lines = source.splitlines()
-    pattern = re.compile(rf"VULN:\s*\[{re.escape(tag)}\]")
+    pattern = re.compile(rf"(?:VULN|FIXED):\s*\[{re.escape(tag)}\]")
     for index, line in enumerate(lines):
         if pattern.search(line):
             start = max(0, index - context)

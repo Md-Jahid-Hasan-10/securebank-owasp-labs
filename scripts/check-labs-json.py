@@ -23,8 +23,12 @@ for lab in labs:
     if not lab.get("code"):
         problems.append(f"lab {lab.get('id')}: empty affected-code block")
     tag = f"[A{str(lab.get('category', ''))[1:]}-Lab{lab.get('id')}]"
-    if tag not in (lab.get("code") or ""):
+    # The marker is VULN: on the training branch and FIXED: on the solution branch.
+    code = lab.get("code") or ""
+    if tag not in code:
         problems.append(f"lab {lab.get('id')}: code block has no {tag} marker")
+    elif "VULN:" not in code and "FIXED:" not in code:
+        problems.append(f"lab {lab.get('id')}: code block has no VULN:/FIXED: marker")
 
 first = labs[0]
 print("keys:", sorted(first.keys()))
