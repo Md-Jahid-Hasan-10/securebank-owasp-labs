@@ -19,6 +19,25 @@
 
 ---
 
+## Branches
+
+| Branch | What it is | Use it for |
+|---|---|---|
+| `main` | **All 25 vulnerabilities are present.** Every `VULN:` marker is live. | Practising the labs. Clone this. |
+| `fixed` | The remediation. Each flaw's marker reads `FIXED:` instead of `VULN:`, and the affected code is patched. | Comparing your own fix against the reference solution. |
+
+The `fixed` branch is a work in progress — Lab 1 is done, the rest are still to
+come. The lab panel adapts automatically: on `main` it shows the vulnerable
+code, on `fixed` it shows the patched code with a note explaining what changed.
+
+```bash
+git clone <url> && cd securebank-labs
+git checkout main     # to practise
+git checkout fixed    # to see the solutions
+```
+
+---
+
 ## What this is
 
 A realistic-looking internet banking application — React frontend, Spring Boot API,
