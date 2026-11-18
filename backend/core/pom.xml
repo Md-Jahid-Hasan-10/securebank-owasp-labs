@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>com.securebank</groupId>
+    <artifactId>securebank-labs-backend</artifactId>
+    <version>1.0.0</version>
+  </parent>
+
+  <artifactId>core</artifactId>
+  <name>SecureBank Labs Core</name>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <!--
+      NOTE: spring-boot-starter-security is deliberately NOT included.
+      Spring Security auto-configuration would silently remediate Labs 1, 2, 15, 18, 21 and 25.
+      Authentication is hand-rolled in com.securebank.core.security so that every
+      flaw is explicit and greppable via the "VULN:" comment convention.
+    -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-jdbc</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-thymeleaf</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-validation</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.flywaydb</groupId>
+      <artifactId>flyway-database-postgresql</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.postgresql</groupId>
+      <artifactId>postgresql</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-api</artifactId>
+      <version>0.12.6</version>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-impl</artifactId>
+      <version>0.12.6</version>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>io.jsonwebtoken</groupId>
+      <artifactId>jjwt-jackson</artifactId>
+      <version>0.12.6</version>
+      <scope>runtime</scope>
+    </dependency>
+    <!--
+      VULN: [A08-Lab20] Insecure Deserialization - commons-collections 3.2.1 provides the
+      InvokerTransformer gadget chain used by Lab 20's Jackson polymorphic deserialization RCE.
+      FIX:  remove this dependency and never enable default typing on untrusted input.
+    -->
+    <dependency>
+      <groupId>commons-collections</groupId>
+      <artifactId>commons-collections</artifactId>
+      <version>3.2.1</version>
+    </dependency>
+
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <resources>
+      <!--
+        VULN: [A02-Lab6] Sensitive File Exposure - the static resource directory is
+        packaged into the artifact as-is, including the .env file, so that it is
+        served over HTTP by the static resource handler.
+        FIX:  never package secrets or VCS metadata into a deployable artifact.
+
+        The fake .git directory is NOT packaged here - Maven's resource scanner skips
+        dot-directories. The Dockerfile copies it into the image's web root instead,
+        which is exactly how a real repository checkout ends up serving its own
+        .git directory over HTTP.
+      -->
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>false</filtering>
+      </resource>
+    </resources>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+        <configuration>
+          <!--
+            VULN: [A02-Lab6] the .git directory is deliberately kept in the artifact so
+            that it can be downloaded over HTTP.
+            FIX:  exclude VCS metadata from the packaged artifact.
+          -->
+          <excludes>
+            <exclude>
+              <groupId>org.projectlombok</groupId>
+              <artifactId>lombok</artifactId>
+            </exclude>
+          </excludes>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+</project>

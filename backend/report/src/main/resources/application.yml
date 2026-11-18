@@ -1,0 +1,20 @@
+server:
+  port: 8081
+  error:
+    include-stacktrace: always
+
+spring:
+  application:
+    name: securebank-report
+  thymeleaf:
+    cache: false
+  jackson:
+    property-naming-strategy: SNAKE_CASE
+
+# VULN: [A05-Lab12] Internal configuration values are exposed through a template
+# that renders user-supplied SpEL/thymeleaf expressions against this config object.
+# FIX:  never evaluate user-supplied template expressions; render fixed templates only.
+report:
+  secret-key: "sb-report-internal-secret-9f3a2c"
+  db-path: "/var/lib/securebank/report-cache.db"
+  internal-only: true

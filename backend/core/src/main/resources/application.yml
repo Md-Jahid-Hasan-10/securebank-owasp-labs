@@ -1,0 +1,70 @@
+server:
+  port: 8080
+  error:
+    # VULN: [A02-Lab4] / [A10-Lab23] Verbose stack traces are returned to the client.
+    # Django's DEBUG=True analogue. Exposes config values, file paths and library versions.
+    # FIX:  set to 'never' in production and configure a dedicated error page.
+    include-stacktrace: always
+    include-message: always
+    include-exception: true
+
+spring:
+  application:
+    name: securebank-core
+
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:postgres}:${DB_PORT:5432}/${DB_NAME:securebank}
+    username: ${DB_USER:securebank}
+    password: ${DB_PASSWORD:securebank}
+    hikari:
+      maximum-pool-size: 10
+
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+
+  thymeleaf:
+    cache: false
+
+  jackson:
+    # NOTE: default typing is deliberately NOT enabled globally. Lab 20 builds its own
+    # ObjectMapper with activateDefaultTyping(...) so the vulnerability is local to that
+    # endpoint. Enabling it here would make every @RequestBody in the application
+    # require a "@class" property, which breaks normal JSON parsing.
+    # VULN: [A08-Lab20] Polymorphic default typing lives in
+    #       Lab20DeserializationController#vulnerableMapper - see that class.
+    default-typing: disabled
+    property-naming-strategy: SNAKE_CASE
+
+# VULN: [A04-Lab8] The JWT signing secret is hardcoded in the shipped configuration file
+# and is also printed to the application log at startup. Anyone with repo access,
+# log access, or the exposed .env file can forge tokens for any user.
+# FIX:  load a >= 256-bit random secret from the environment; never commit it.
+jwt:
+  secret: "secret"
+  expiration-seconds: 3600
+
+# VULN: [A02-Lab6] The static resource directory is the web root, so files placed there
+# are served verbatim. Lab 6 ships .env and .git/config here; Lab 22 writes uploads here.
+# FIX:  serve static assets from a dedicated directory outside the web root.
+app:
+  # The filesystem directory that is exposed as the web root.
+  web-root: ${APP_WEB_ROOT:static}
+  # Where Lab 22 writes uploaded files. Inside the web root - on purpose.
+  upload-dir: ${APP_UPLOAD_DIR:static/uploads}
+
+server.servlet:
+  # exposed by the Lab 4 debug endpoint
+  app:
+    name: SecureBank Core
+    internal-report-service: "http://report:8081"
+
+logging:
+  level:
+    com.securebank: INFO
