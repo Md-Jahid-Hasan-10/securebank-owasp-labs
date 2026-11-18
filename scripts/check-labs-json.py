@@ -23,7 +23,8 @@ for lab in labs:
     if not lab.get("code"):
         problems.append(f"lab {lab.get('id')}: empty affected-code block")
     tag = f"[A{str(lab.get('category', ''))[1:]}-Lab{lab.get('id')}]"
-    # The marker is VULN: on the training branch and FIXED: on the solution branch.
+    # The marker is "VULN: [tag]" on the training branch and "FIXED: [tag]" on the
+    # solution branch. The tag is what identifies the lab, so that is what we check.
     code = lab.get("code") or ""
     if tag not in code:
         problems.append(f"lab {lab.get('id')}: code block has no {tag} marker")

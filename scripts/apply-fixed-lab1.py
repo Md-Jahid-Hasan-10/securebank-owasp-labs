@@ -26,6 +26,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONTROLLER = ROOT / "backend/core/src/main/java/com/securebank/lab/a01/Lab1IdorController.java"
 VERIFY = ROOT / "scripts/verify-labs.sh"
 META = ROOT / "labs/labs.meta.yaml"
+WALKTHROUGH = ROOT / "scripts/verify-walkthrough.sh"
 
 # The marker and the code that follows it are replaced in one atomic
 # operation, so the authorization check cannot end up separated from the
@@ -46,7 +47,7 @@ OLD_BLOCK = """        // VULN: [A01-Lab1] IDOR / Broken Object Level Authorizat
         }
 """
 
-NEW_BLOCK = """        // FIXED [A01-Lab1] IDOR / Broken Object Level Authorization.
+NEW_BLOCK = """        // FIXED: [A01-Lab1] IDOR / Broken Object Level Authorization.
         // WAS: the account was fetched by primary key only, and the owning user_id
         // was never compared with the authenticated caller's id, so any logged-in
         // customer could read any account in the system.
@@ -80,8 +81,8 @@ if should_run 1; then
   lab 1 "IDOR"
   OUT="$(get "$API/api/a01/accounts/2")"
   check "alice CANNOT read bob's account via /accounts/2" "$OUT" '"error"'
-  check "no balance is disclosed" "$OUT" '"balance"'
-  check "the response does not leak bob's account number" "$OUT" '"ACC-1002"'
+  refute "no balance is disclosed" "$OUT" '"balance"'
+  refute "bob's account number is not leaked" "$OUT" '"ACC-1002"'
   check "a non-owner gets 404, not 403 (no enumeration oracle)" "$OUT" '"error":"Account not found"'
   OWN="$(get "$API/api/a01/accounts/1")"
   check "alice can still read her OWN account" "$OWN" '"account_number":"ACC-1001"'
@@ -125,6 +126,20 @@ NEW_META_HINT = """    hint: >-
 
 changes = 0
 
+# The walkthrough script asserts the exploit still works, so its Lab 1 check has
+# to be inverted on the solution branch too.
+OLD_WALKTHROUGH = """echo "== Lab 1: IDOR =="
+check "GET /api/a01/accounts/2 returns bob's account" \\
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/2")" '"account_number":"ACC-1002"'
+"""
+
+NEW_WALKTHROUGH = """echo "== Lab 1: IDOR (fixed on this branch) =="
+check "GET /api/a01/accounts/2 is refused for a non-owner" \\
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/2")" '"error":"Account not found"'
+check "GET /api/a01/accounts/1 still returns alice's own account" \\
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/1")" '"account_number":"ACC-1001"'
+"""
+
 
 def replace(path: Path, old: str, new: str, label: str) -> None:
     global changes
@@ -144,6 +159,7 @@ print("applying the Lab 1 solution to the fixed branch")
 replace(CONTROLLER, OLD_BLOCK, NEW_BLOCK, "Lab1IdorController.java (marker + authorization check)")
 replace(VERIFY, OLD_VERIFY, NEW_VERIFY, "verify-labs.sh (Lab 1 expectations)")
 replace(META, OLD_META_HINT, NEW_META_HINT, "labs.meta.yaml (Lab 1 hint/fix)")
+replace(WALKTHROUGH, OLD_WALKTHROUGH, NEW_WALKTHROUGH, "verify-walkthrough.sh (Lab 1 expectations)")
 
 # The controller needs two imports for the fix to compile.
 text = CONTROLLER.read_text(encoding="utf-8")

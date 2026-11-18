@@ -118,12 +118,16 @@ lab() {
   bold "Lab $1 — $2"
 }
 
-# --- Lab 1: IDOR ------------------------------------------------------------
+# --- Lab 1: IDOR (FIXED on this branch) -------------------------------------
 if should_run 1; then
   lab 1 "IDOR"
   OUT="$(get "$API/api/a01/accounts/2")"
-  check "alice can read bob's account via /accounts/2" "$OUT" '"account_number":"ACC-1002"'
-  check "bob's balance is disclosed" "$OUT" '"balance"'
+  check "alice CANNOT read bob's account via /accounts/2" "$OUT" '"error"'
+  refute "no balance is disclosed" "$OUT" '"balance"'
+  refute "bob's account number is not leaked" "$OUT" '"ACC-1002"'
+  check "a non-owner gets 404, not 403 (no enumeration oracle)" "$OUT" '"error":"Account not found"'
+  OWN="$(get "$API/api/a01/accounts/1")"
+  check "alice can still read her OWN account" "$OWN" '"account_number":"ACC-1001"'
 fi
 
 # --- Lab 2: privilege escalation --------------------------------------------

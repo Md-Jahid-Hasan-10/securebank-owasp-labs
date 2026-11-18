@@ -41,15 +41,18 @@ labs:
          curl -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/a01/accounts/2
          ```
     hint: >-
-      The endpoint accepts an account id in the path. Ask what it does with the
-      authenticated user's id before it returns the record.
+      This lab is FIXED on the `fixed` branch. Compare it with `main` to see the
+      original flaw:
+      `git diff main fixed -- backend/core/src/main/java/com/securebank/lab/a01/`
     fix: >-
-      Compare the account's owner with the caller before returning it:
+      Compare the account's owner with the caller before returning it. Reject with
+      404 rather than 403, so a caller cannot distinguish "exists but not yours"
+      from "does not exist":
 
       ```java
-      if (!Objects.equals(account.getUserId(), caller.getId())) {
-          return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                  .body(Map.of("error", "Not your account"));
+      if (caller == null || !Objects.equals(account.getUserId(), caller.getId())) {
+          return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                  .body(Map.of("error", "Account not found"));
       }
       ```
 

@@ -2,6 +2,7 @@ package com.securebank.lab.a01;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 
 import com.securebank.core.account.Account;
 import com.securebank.core.account.AccountRepository;
@@ -11,6 +12,7 @@ import com.securebank.core.transfer.Transfer;
 import com.securebank.core.transfer.TransferRepository;
 import com.securebank.lab.common.LabResponses;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -68,19 +70,23 @@ public class Lab1IdorController {
     public ResponseEntity<?> accountDetail(@PathVariable Long id) {
         CurrentUser caller = CurrentUserHolder.get();
 
-        // VULN: [A01-Lab1] IDOR / Broken Object Level Authorization - the account is fetched
-        // by primary key only. The owning user_id is never compared with the authenticated
-        // caller's id, so any logged-in customer can read any account in the system.
-        // FIX:  load the account and reject the request unless account.user_id equals the
-        //       authenticated caller's id, e.g.
-        //       if (!Objects.equals(account.getUserId(), caller.getId())) {
-        //           return ResponseEntity.status(HttpStatus.FORBIDDEN)
-        //                   .body(Map.of("error", "Not your account"));
-        //       }
+        // FIXED: [A01-Lab1] IDOR / Broken Object Level Authorization.
+        // WAS: the account was fetched by primary key only, and the owning user_id
+        // was never compared with the authenticated caller's id, so any logged-in
+        // customer could read any account in the system.
+        // NOW: the caller's id is compared against account.user_id. A mismatch is
+        // rejected with 404 and the same "Account not found" body as a genuinely
+        // missing account, so a caller cannot tell "exists but not yours" from
+        // "does not exist" - see Lab 16 for why that distinction matters.
         Account account = accounts.findById(id).orElse(null);
 
         if (account == null) {
             return ResponseEntity.status(404).body(Map.of("error", "Account not found"));
+        }
+
+        if (caller == null || !Objects.equals(account.getUserId(), caller.getId())) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                    .body(Map.of("error", "Account not found"));
         }
 
         List<Transfer> history = transfers.findByAccountId(account.getId());

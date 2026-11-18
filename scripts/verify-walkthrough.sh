@@ -37,9 +37,11 @@ if [[ -z "$TOKEN" ]]; then
 fi
 AUTH=(-H "Authorization: Bearer $TOKEN")
 
-echo "== Lab 1: IDOR =="
-check "GET /api/a01/accounts/2 returns bob's account" \
-  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/2")" '"account_number":"ACC-1002"'
+echo "== Lab 1: IDOR (fixed on this branch) =="
+check "GET /api/a01/accounts/2 is refused for a non-owner" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/2")" '"error":"Account not found"'
+check "GET /api/a01/accounts/1 still returns alice's own account" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/1")" '"account_number":"ACC-1001"'
 
 echo "== Lab 2: privilege escalation =="
 check "GET /api/a01/admin/users as a customer" \
