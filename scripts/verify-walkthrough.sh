@@ -43,9 +43,9 @@ check "GET /api/a01/accounts/2 is refused for a non-owner" \
 check "GET /api/a01/accounts/1 still returns alice's own account" \
   "$(curl -s "${AUTH[@]}" "$API/api/a01/accounts/1")" '"account_number":"ACC-1001"'
 
-echo "== Lab 2: privilege escalation =="
-check "GET /api/a01/admin/users as a customer" \
-  "$(curl -s "${AUTH[@]}" "$API/api/a01/admin/users")" '"username":"admin"'
+echo "== Lab 2: privilege escalation (fixed on this branch) =="
+check "GET /api/a01/admin/users is refused for a customer" \
+  "$(curl -s "${AUTH[@]}" "$API/api/a01/admin/users")" '"error":"Admin role required"'
 
 echo "== Lab 3: SSRF =="
 check "SSRF to the internal report service" \

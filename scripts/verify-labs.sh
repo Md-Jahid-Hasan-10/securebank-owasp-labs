@@ -130,12 +130,19 @@ if should_run 1; then
   check "alice can still read her OWN account" "$OWN" '"account_number":"ACC-1001"'
 fi
 
-# --- Lab 2: privilege escalation --------------------------------------------
+# --- Lab 2: privilege escalation (FIXED on this branch) ----------------------
 if should_run 2; then
   lab 2 "Privilege escalation"
   OUT="$(get "$API/api/a01/admin/users")"
-  check "customer can list all users via /admin/users" "$OUT" '"username":"admin"'
-  check "password hashes are disclosed" "$OUT" '"password_hash"'
+  check "a customer is refused by /admin/users" "$OUT" '"error":"Admin role required"'
+  refute "the user list is not disclosed" "$OUT" '"username"'
+  refute "password hashes are not disclosed" "$OUT" '"password_hash"'
+  OUT="$(get "$API/api/a01/admin/accounts")"
+  check "a customer is refused by /admin/accounts too" "$OUT" '"error":"Admin role required"'
+  refute "no account balances are disclosed" "$OUT" '"balance"'
+  ADMIN_TOKEN="$(login admin admin)"
+  OUT="$(curl -s -H "Authorization: Bearer $ADMIN_TOKEN" "$API/api/a01/admin/users")"
+  check "an admin token still works" "$OUT" '"username":"admin"'
 fi
 
 # --- Lab 3: SSRF ------------------------------------------------------------
@@ -214,8 +221,8 @@ sig = b64url(hmac.new(b"secret", f"{header}.{payload}".encode(), hashlib.sha256)
 print(f"{header}.{payload}.{sig}")
 PY
 )"
-  OUT="$(get "$API/api/a01/admin/users" -H "Authorization: Bearer $FORGED")"
-  check "token signed with 'secret' is accepted" "$OUT" '"username":"admin"'
+  OUT="$(curl -s -H "Authorization: Bearer $FORGED" "$API/api/a10/transfers/history")"
+  check "token signed with 'secret' is accepted as admin" "$OUT" '"requested_role":"admin"'
 fi
 
 # --- Lab 9: PII in cleartext ------------------------------------------------
@@ -428,8 +435,8 @@ payload = b64url({"user_id": 3, "username": "admin", "role": "admin"})
 print(f"{header}.{payload}.")
 PY
 )"
-  OUT="$(get "$API/api/a01/admin/users" -H "Authorization: Bearer $FORGED")"
-  check "unsigned alg:none token is accepted as admin" "$OUT" '"username":"admin"'
+  OUT="$(curl -s -H "Authorization: Bearer $FORGED" "$API/api/a10/transfers/history")"
+  check "unsigned alg:none token is accepted as admin" "$OUT" '"requested_role":"admin"'
 fi
 
 # --- Lab 22: unrestricted upload --------------------------------------------

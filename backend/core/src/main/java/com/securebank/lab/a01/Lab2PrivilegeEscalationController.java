@@ -11,6 +11,7 @@ import com.securebank.core.user.User;
 import com.securebank.core.user.UserRepository;
 import com.securebank.lab.common.LabResponses;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -40,16 +41,23 @@ public class Lab2PrivilegeEscalationController {
     public ResponseEntity<?> users() {
         CurrentUser caller = CurrentUserHolder.get();
 
-        // VULN: [A01-Lab2] Privilege Escalation / Missing Function Level Access Control -
-        // the endpoint is reachable by any authenticated principal. It confirms that a
-        // token exists but never checks that the token carries the admin role, so a
-        // regular customer can enumerate every account, discover which users are
-        // admins, and read their password hashes.
-        // FIX:  require the admin role, e.g. in an @RequireRole("admin") annotation:
-        //       if (!"admin".equals(caller.getRole())) {
-        //           return ResponseEntity.status(HttpStatus.FORBIDDEN)
-        //                   .body(Map.of("error", "Admin role required"));
-        //       }
+        // FIXED: [A01-Lab2] Privilege Escalation / Missing Function Level Access Control.
+        // WAS: the endpoint was reachable by any authenticated principal. It confirmed
+        // that a token exists but never checked that the token carried the admin role,
+        // so a regular customer could enumerate every account, discover which users
+        // were admins, and read their password hashes.
+        // NOW: the caller's role is checked before anything is read. A non-admin gets
+        // 403 and the query never runs, so no user row - and in particular no
+        // password_hash - is ever serialised into the response.
+        //
+        // The check is centralised in requireAdmin() below rather than repeated
+        // inline, because a per-endpoint check is exactly the kind of thing that
+        // gets forgotten when the next admin endpoint is added.
+        ResponseEntity<?> denied = requireAdmin(caller);
+        if (denied != null) {
+            return denied;
+        }
+
         List<User> all = users.findAll();
 
         return ResponseEntity.ok(LabResponses.map(
@@ -70,9 +78,13 @@ public class Lab2PrivilegeEscalationController {
     public ResponseEntity<?> accounts() {
         CurrentUser caller = CurrentUserHolder.get();
 
-        // VULN: [A01-Lab2] the same missing role check as /users - every customer can
+        // FIXED: [A01-Lab2] the same missing role check as /users - every customer can
         // list every account and its balance.
-        // FIX:  require the admin role before returning the list.
+        ResponseEntity<?> denied = requireAdmin(caller);
+        if (denied != null) {
+            return denied;
+        }
+
         List<Account> all = accounts.findAll();
 
         return ResponseEntity.ok(LabResponses.map(
@@ -84,5 +96,20 @@ public class Lab2PrivilegeEscalationController {
                         "account_number", account.getAccountNumber(),
                         "balance", account.getBalance(),
                         "currency", account.getCurrency())).toList()));
+    }
+
+    /**
+     * Rejects the request unless the caller holds the admin role.
+     *
+     * <p>Returns the 403 response to send, or {@code null} when the caller is
+     * allowed through. The role is read from the verified principal, never from
+     * anything the client supplied in the request body or query string.</p>
+     */
+    private ResponseEntity<?> requireAdmin(CurrentUser caller) {
+        if (caller == null || !caller.isAdmin()) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                    .body(Map.of("error", "Admin role required"));
+        }
+        return null;
     }
 }

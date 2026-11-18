@@ -79,20 +79,39 @@ labs:
          ```
       3. Observe the full user list including hashed passwords and email addresses.
     hint: >-
-      The filter that guards these endpoints checks whether a token was presented,
-      but not what role the token carries.
+      This lab is FIXED on the `fixed` branch. Compare it with `main` to see the
+      original flaw:
+      `git diff main fixed -- backend/core/src/main/java/com/securebank/lab/a01/`
     fix: >-
-      Add a role check so that only admin tokens are accepted:
+      Check the caller's role before the query runs, so a non-admin is refused
+      with 403 and no user row is ever serialised into the response:
 
       ```java
-      if (!"admin".equals(caller.getRole())) {
-          return ResponseEntity.status(HttpStatus.FORBIDDEN)
-                  .body(Map.of("error", "Admin role required"));
+      ResponseEntity<?> denied = requireAdmin(caller);
+      if (denied != null) {
+          return denied;
       }
       ```
 
-      Better: express this as a `@RequireRole("admin")` annotation applied at the
-      method level, so the check cannot be forgotten on a new endpoint.
+      with a single helper that every admin endpoint calls:
+
+      ```java
+      private ResponseEntity<?> requireAdmin(CurrentUser caller) {
+          if (caller == null || !caller.isAdmin()) {
+              return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                      .body(Map.of("error", "Admin role required"));
+          }
+          return null;
+      }
+      ```
+
+      Centralising it matters: a per-endpoint check is exactly the kind of thing
+      that gets forgotten when the next admin endpoint is added. In production
+      this would be an `@RequireRole("admin")` annotation applied at the method
+      level, or a URL-based authorisation ruleset.
+
+      Authentication and authorisation are different questions. The filter answers
+      "who are you?"; the role check answers "are you allowed to do this?".
     source: core/src/main/java/com/securebank/lab/a01/Lab2PrivilegeEscalationController.java
     anchors:
       - "public ResponseEntity<?> users()"
