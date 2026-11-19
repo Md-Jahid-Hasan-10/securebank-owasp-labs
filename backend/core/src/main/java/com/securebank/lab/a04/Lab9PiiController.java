@@ -37,7 +37,7 @@ public class Lab9PiiController {
     }
 
     /**
-     * Returns the full profile of the authenticated user.
+     * Returns the profile of the authenticated user, with sensitive fields masked.
      */
     @GetMapping("/profile")
     public ResponseEntity<?> profile() {
@@ -51,31 +51,111 @@ public class Lab9PiiController {
 
         Account account = accounts.findByUserId(user.getId()).stream().findFirst().orElse(null);
 
-        // VULN: [A04-Lab9] Cleartext Exposure of Sensitive Information - the full account
-        // number, sort code, email, balance and legal name are returned unmasked. Over plain
-        // HTTP (which this lab runs on) every network observer can read them, and the data
-        // is also written to the log below where it persists for the life of the log file.
-        // FIX:  mask sensitive fields in responses (ACC-****1001, sort code 20-**-**),
-        //       never log PII, and serve the API exclusively over TLS.
+        // FIXED: [A04-Lab9] Cleartext Exposure of Sensitive Information - the account
+        // number, sort code, email, balance and legal name used to be returned unmasked,
+        // so every network observer could read them.
+        // NOW: the response carries masked values only. The account number keeps its
+        //       last four digits (ACC-****1001) and the sort code its first segment
+        //       (20-**-**), which is enough for the customer to recognise their own
+        //       account without disclosing it. The balance is dropped entirely: it is
+        //       the one field that carries no identification value at all, and the
+        //       dashboard serves it from the authenticated account endpoint.
+        //       The email address is masked to its first character and domain.
         Map<String, Object> response = Map.of(
                 "user_id", user.getId(),
-                "full_name", user.getFullName(),
-                "email", user.getEmail(),
-                "account_number", account == null ? null : account.getAccountNumber(),
-                "sort_code", user.getSortCode(),
-                "balance", account == null ? null : account.getBalance(),
+                "full_name", maskName(user.getFullName()),
+                "email", maskEmail(user.getEmail()),
+                "account_number", account == null ? null : maskAccountNumber(account.getAccountNumber()),
+                "sort_code", user.getSortCode() == null ? null : maskSortCode(user.getSortCode()),
                 "currency", account == null ? null : account.getCurrency());
 
-        // VULN: [A04-Lab9] PII is also written to the application log, where it outlives
-        // the request and is visible to anyone with log access (or a log aggregation
-        // system that was never intended to hold personal data).
-        // FIX:  log identifiers only, never names, account numbers, balances or emails.
-        log.info("profile lookup for user={} account_number={} sort_code={} balance={}",
-                user.getUsername(),
-                account == null ? null : account.getAccountNumber(),
-                user.getSortCode(),
-                account == null ? null : account.getBalance());
+        // FIXED: [A04-Lab9] PII used to be written to the application log, where it
+        // outlived the request and was visible to anyone with log access.
+        // NOW: the log line records identifiers only - no name, account number,
+        //       sort code, balance or email address. This is enough to correlate
+        //       and audit the request without copying personal data into a system
+        //       that was never meant to hold it.
+        log.info("profile lookup for user={} user_id={}", user.getUsername(), user.getId());
 
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Masks an account number, keeping only the last four characters.
+     *
+     * <p>FIXED: [A04-Lab9] e.g. {@code ACC-1001} becomes {@code ACC-****1001}. The
+     * prefix is preserved so the customer can tell which product the account belongs
+     * to; the middle is replaced with asterisks.</p>
+     */
+    private static String maskAccountNumber(String accountNumber) {
+        if (accountNumber == null || accountNumber.length() <= 4) {
+            return "****";
+        }
+        String tail = accountNumber.substring(accountNumber.length() - 4);
+        int dash = accountNumber.indexOf('-');
+        if (dash > 0 && dash < accountNumber.length() - 4) {
+            // Keep the product prefix (ACC-) and mask only the numbering.
+            return accountNumber.substring(0, dash + 1) + "****" + tail;
+        }
+        return "****" + tail;
+    }
+
+    /**
+     * Masks a sort code, keeping only the first segment.
+     *
+     * <p>FIXED: [A04-Lab9] e.g. {@code 20-00-00} becomes {@code 20-**-**}. The bank
+     * identifier is not personal data and is useful for display, but the middle
+     * segment is what identifies the branch and the account together.</p>
+     */
+    private static String maskSortCode(String sortCode) {
+        if (sortCode == null || sortCode.isBlank()) {
+            return null;
+        }
+        String[] parts = sortCode.split("-");
+        if (parts.length < 3) {
+            return "**-**";
+        }
+        return parts[0] + "-**-**";
+    }
+
+    /**
+     * Masks a personal name, keeping only the first character of each word.
+     *
+     * <p>FIXED: [A04-Lab9] e.g. {@code Alice Morgan} becomes {@code A**** ******}. The
+     * response is a self-service profile, so the caller is entitled to see their own
+     * name - but the response may be cached, logged by a proxy or written to a
+     * support ticket, and a masked value limits what leaks with it.</p>
+     */
+    private static String maskName(String fullName) {
+        if (fullName == null || fullName.isBlank()) {
+            return null;
+        }
+        StringBuilder masked = new StringBuilder();
+        for (String word : fullName.trim().split("\\s+")) {
+            if (masked.length() > 0) {
+                masked.append(' ');
+            }
+            masked.append(word.charAt(0)).append("*".repeat(word.length() - 1));
+        }
+        return masked.toString();
+    }
+
+    /**
+     * Masks an email address, keeping the first character and the domain.
+     *
+     * <p>FIXED: [A04-Lab9] e.g. {@code alice@bank.com} becomes {@code a****@bank.com}.
+     * The domain is not personal data, and keeping it means the address is still
+     * recognisable to its owner.</p>
+     */
+    private static String maskEmail(String email) {
+        if (email == null || email.isBlank()) {
+            return null;
+        }
+        int at = email.indexOf('@');
+        if (at <= 0) {
+            return "****";
+        }
+        String local = email.substring(0, at);
+        return local.charAt(0) + "*".repeat(local.length() - 1) + email.substring(at);
     }
 }

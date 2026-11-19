@@ -404,12 +404,33 @@ PY
   fi
 fi
 
-# --- Lab 9: PII in cleartext ------------------------------------------------
+# --- Lab 9: PII in cleartext (FIXED on this branch) --------------------------
 if should_run 9; then
   lab 9 "PII in cleartext responses"
   OUT="$(get "$API/api/a04/profile")"
-  check "full account number is returned" "$OUT" '"account_number":"ACC-1001"'
-  check "sort code is returned" "$OUT" '"sort_code"'
+  refute "the full account number is not returned" "$OUT" '"account_number":"ACC-1001"'
+  check "the account number is masked" "$OUT" '"account_number":"ACC-****1001"'
+  refute "the full sort code is not returned" "$OUT" '"sort_code":"20-00-00"'
+  check "the sort code is masked" "$OUT" '"sort_code":"20-**-**"'
+  refute "the full name is not returned" "$OUT" '"full_name":"Alice Morgan"'
+  refute "the full email address is not returned" "$OUT" '"email":"alice@bank.com"'
+  refute "the balance is not returned" "$OUT" '"balance"'
+  # The PII must not be written to the application log either.
+  OUT="$(docker compose logs backend 2>/dev/null | grep -c 'account_number=' || true)"
+  refute "the log does not contain the account number" "$OUT" "1"
+  OUT="$(docker compose logs backend 2>/dev/null | grep -c 'profile lookup.*balance=' || true)"
+  refute "the log does not contain the balance" "$OUT" "1"
+  # The lookup must still be logged, so the request can be audited. The count grows
+  # with every run, so test for presence rather than for an exact number.
+  OUT="$(docker compose logs backend 2>/dev/null | grep -c 'profile lookup' || true)"
+  if [[ "${OUT:-0}" -gt 0 ]]; then
+    green "the profile lookup is still logged"
+    PASS=$((PASS + 1))
+  else
+    red "the profile lookup is no longer logged"
+    FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
+  fi
 fi
 
 # --- Lab 10: SQL injection ---------------------------------------------------

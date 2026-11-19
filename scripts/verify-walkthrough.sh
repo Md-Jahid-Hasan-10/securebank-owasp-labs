@@ -147,8 +147,13 @@ else
 fi
 
 echo "== Lab 9: PII =="
-check "GET /api/a04/profile leaks the account number" \
-  "$(curl -s "${AUTH[@]}" "$API/api/a04/profile")" '"account_number":"ACC-1001"'
+if [[ "$(curl -s "${AUTH[@]}" "$API/api/a04/profile")" == *'"account_number":"ACC-1001"'* ]]; then
+  printf '\033[31m  FAIL\033[0m GET /api/a04/profile leaks the account number\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m GET /api/a04/profile does not leak the account number\n'
+  PASS=$((PASS + 1))
+fi
 
 echo "== Lab 10: SQL injection =="
 check "login bypass with admin' --" \

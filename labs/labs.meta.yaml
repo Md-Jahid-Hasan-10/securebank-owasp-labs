@@ -475,6 +475,14 @@ labs:
     fix: >-
       Mask sensitive fields in responses (`ACC-****1001`, `20-**-**`). Never log PII.
       Use TLS in transit and apply field-level encryption at rest.
+
+      **What was changed:** the profile endpoint now masks every sensitive field.
+      The account number keeps only its last four digits, the sort code only its
+      first segment, the name and the email address keep their first character,
+      and the balance is dropped entirely - the dashboard reads it from the
+      authenticated account endpoint instead. The log line now records the
+      username and the user id and nothing else, so no personal data reaches the
+      log file.
     source: core/src/main/java/com/securebank/lab/a04/Lab9PiiController.java
     anchors:
       - "Map<String, Object> response = Map.of("
