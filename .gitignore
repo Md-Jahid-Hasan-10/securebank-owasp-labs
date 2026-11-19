@@ -26,15 +26,14 @@ Thumbs.db
 
 # --- SecureBank Labs specific -----------------------------------------------
 
+# The one-off commit/push helper scripts are written per task and then used
+# once. Tracking them would mean a commit for every helper.
+scripts/do-commit-*.sh
+scripts/do-push-*.sh
+
 # Lab 6: the database dump is generated at container start, never committed.
 backend/core/src/main/resources/static/backup.zip
 *.dump
-
-# Lab 6: an environment file is never committed and never shipped inside the
-# document root. On the vulnerable branch the fake .env is a training fixture
-# that is tracked explicitly; on the fixed branch it is not tracked at all.
-.env
-backend/core/src/main/resources/static/.env
 
 # Lab 22: uploaded files are written at runtime, never committed.
 backend/core/src/main/resources/static/uploads/*
