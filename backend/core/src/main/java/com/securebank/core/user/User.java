@@ -3,8 +3,8 @@ package com.securebank.core.user;
 /**
  * A banking customer or staff member.
  *
- * <p>The {@code passwordHash} column deliberately holds an <b>unsalted MD5</b> hex digest.
- * See {@link PasswordService} and Lab 7 (A04).</p>
+ * <p>The {@code passwordHash} column holds a <b>bcrypt</b> hash with a unique salt
+ * per user. See {@link PasswordService} and Lab 7 (A04).</p>
  */
 public class User {
 

@@ -112,7 +112,8 @@ public class Lab19ResetController {
                         return ResponseEntity.status(404).body(Map.of("error", "User not found"));
                     }
 
-                    users.updatePasswordHash(user.getId(), PasswordService.md5(newPassword));
+                    // FIXED: [A04-Lab7] the reset password is stored as a bcrypt hash.
+                    users.updatePasswordHash(user.getId(), PasswordService.hash(newPassword));
 
                     return ResponseEntity.ok(Map.of(
                             "password_reset", true,

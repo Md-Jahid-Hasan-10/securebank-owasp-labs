@@ -1,19 +1,24 @@
 -- SecureBank Labs — seed data
--- Password hashes are unsalted MD5 (Lab 7). Verified values:
---   password123 -> 482c811da5d5b4bc6d497ffa98491e38
---   qwerty      -> d8578edf8458ce06fbc5bb76a58c5ca4
---   admin       -> 21232f297a57a5a743894a0e4a801fc3
---   charlie     -> bf779e0933a882808585d19455cd7937
-
+--
+-- FIXED: [A04-Lab7] Cryptographic Failure - the password hashes are no longer
+-- unsalted MD5 digests. They are bcrypt hashes (cost 12), each with its own
+-- random salt, so the same password hashes to a different stored value for every
+-- account. The plaintext passwords are unchanged, so the seeded accounts still
+-- work for the labs:
+--   alice   -> password123
+--   bob     -> qwerty
+--   admin   -> admin
+--   charlie -> charlie
+--
 -- FIXED: [A02-Lab5] Default Credentials - the administrator used to be seeded with
 -- the factory password, so anyone who had read this file could log in as admin.
 -- NOW: the seeded administrator is flagged must_change_password and cannot be used
 --       until its password has been replaced.
 INSERT INTO users (id, username, email, password_hash, role, full_name, sort_code, must_change_password) VALUES
-                                                                                                             (1, 'alice',   'alice@bank.com',   '482c811da5d5b4bc6d497ffa98491e38', 'customer', 'Alice Morgan',   '20-00-00', FALSE),
-                                                                                                             (2, 'bob',     'bob@bank.com',     'd8578edf8458ce06fbc5bb76a58c5ca4', 'customer', 'Bob Carter',    '20-00-00', FALSE),
-                                                                                                             (3, 'admin',   'admin@bank.com',   '21232f297a57a5a743894a0e4a801fc3', 'admin',   'System Admin',  '20-00-00', TRUE),
-                                                                                                             (4, 'charlie', 'charlie@bank.com', 'bf779e0933a882808585d19455cd7937', 'customer', 'Charlie Reid',  '20-00-00', FALSE);
+                                                                                                             (1, 'alice',   'alice@bank.com',   '$2a$12$rRbHhLMozsJ2kJQ/v0bBwO/x.IUWHplP8AojZ2YZXdHF4IFVcVVVW', 'customer', 'Alice Morgan',   '20-00-00', FALSE),
+                                                                                                             (2, 'bob',     'bob@bank.com',     '$2a$12$.3TQGXOST0NkP8GgqaM66enor5XLhi4pzpG7spXwoSJhUQW7JiDwW', 'customer', 'Bob Carter',    '20-00-00', FALSE),
+                                                                                                             (3, 'admin',   'admin@bank.com',   '$2a$12$bYKrnmss.vgt6WKRqNNwhOQxHE6KgIdmrUNf57Mc0Cj6TFFJ/KuyS', 'admin',   'System Admin',  '20-00-00', TRUE),
+                                                                                                             (4, 'charlie', 'charlie@bank.com', '$2a$12$gx0CF8X71VHBfmym7CN74uKosWoW0YMAtaGIaYlspZoOum.qqQseK', 'customer', 'Charlie Reid',  '20-00-00', FALSE);
 
 INSERT INTO accounts (id, user_id, account_number, sort_code, balance, currency) VALUES
                                                                                      (1, 1, 'ACC-1001', '20-00-00',  4200.00, 'GBP'),

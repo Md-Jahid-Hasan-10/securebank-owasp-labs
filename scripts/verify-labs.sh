@@ -307,14 +307,28 @@ if should_run 6; then
   refute "the panel does not advertise /backup.zip" "$OUT" '"url":"/backup.zip"'
 fi
 
-# --- Lab 7: MD5 hashes ------------------------------------------------------
+# --- Lab 7: MD5 hashes (FIXED on this branch) --------------------------------
 if should_run 7; then
   lab 7 "Unsalted MD5 password hashes"
   OUT="$(get "$API/api/a04/hashes")"
-  check "hashes endpoint returns MD5 digests" "$OUT" '482c811da5d5b4bc6d497ffa98491e38'
-  check "hashes endpoint reports no salt" "$OUT" '"salted":false'
+  # The stored hashes are no longer handed out at all.
+  refute "the hashes endpoint no longer returns MD5 digests" "$OUT" '482c811da5d5b4bc6d497ffa98491e38'
+  refute "no seeded password hash is disclosed" "$OUT" '$2a$12$'
+  check "the hashes endpoint reports a salted algorithm" "$OUT" '"salted":true'
+  check "the hashes endpoint reports bcrypt" "$OUT" '"algorithm":"bcrypt"'
+  check "the hashes are redacted" "$OUT" '"password_hash":"(redacted)"'
+  # The in-process cracker is gone.
   OUT="$(get "$API/api/a04/crack")"
-  check "alice's password is cracked in-app" "$OUT" 'password123'
+  refute "alice's password is not cracked in-app" "$OUT" 'password123'
+  refute "no password is cracked in-app" "$OUT" '"cracked":{"alice"'
+  # And the hashes themselves are bcrypt in the database, not MD5.
+  OUT="$(get "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")"
+  check "the stored hashes are bcrypt" "$OUT" '$2a$12$'
+  refute "no MD5 digest survives in the database" "$OUT" '482c811da5d5b4bc6d497ffa98491e38'
+  # A legitimate login still works with the seeded password. The login helper
+  # returns the raw token, so the assertion is that a token came back.
+  OUT="$(login alice password123)"
+  check "alice can still log in with her seeded password" "$OUT" 'eyJ'
 fi
 
 # --- Lab 8: hardcoded JWT secret --------------------------------------------

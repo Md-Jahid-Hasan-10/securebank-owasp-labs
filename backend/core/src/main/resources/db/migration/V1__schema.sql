@@ -1,11 +1,12 @@
 -- SecureBank Labs — schema
--- Intentionally vulnerable training target. Passwords are stored as unsalted MD5 (Lab 7).
+-- FIXED: [A04-Lab7] Passwords are stored as bcrypt hashes with a unique salt per
+-- user. The column is 255 characters wide because a bcrypt hash is 60 characters.
 
 CREATE TABLE users (
                        id              BIGSERIAL PRIMARY KEY,
                        username        VARCHAR(64)  NOT NULL UNIQUE,
                        email           VARCHAR(255) NOT NULL,
-                       password_hash   VARCHAR(64)  NOT NULL,   -- VULN: [A04-Lab7] unsalted MD5 hex
+                       password_hash   VARCHAR(255) NOT NULL,   -- FIXED: [A04-Lab7] bcrypt hash
                        role            VARCHAR(32)  NOT NULL DEFAULT 'customer',
                        full_name       VARCHAR(255),
                        sort_code       VARCHAR(8),

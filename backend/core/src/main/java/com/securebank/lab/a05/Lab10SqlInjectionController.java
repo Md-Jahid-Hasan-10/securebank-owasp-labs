@@ -64,19 +64,17 @@ public class Lab10SqlInjectionController {
         String username = request.username() == null ? "" : request.username();
         String password = request.password() == null ? "" : request.password();
 
-        // VULN: [A05-Lab10] SQL Injection - the username and password are concatenated
-        // straight into the SQL text, so the attacker controls the statement. The
-        // classic payload is username = "admin' --" which comments out the password
-        // comparison entirely, or "' OR '1'='1' --" which matches every row.
+        // VULN: [A05-Lab10] SQL Injection - the username is concatenated straight
+        // into the SQL text, so the attacker controls the statement. The classic
+        // payload is username = "admin' --" which comments out the rest of the
+        // statement, or "' OR '1'='1' --" which matches every row.
         // FIX:  use parameter binding:
         //       PreparedStatement ps = conn.prepareStatement(
         //           "SELECT username, password_hash, email, role, id FROM users "
-        //           + "WHERE username = ? AND password_hash = ?");
+        //           + "WHERE username = ?");
         //       ps.setString(1, username);
-        //       ps.setString(2, PasswordService.md5(password));
         String sql = "SELECT username, password_hash, email, role, id FROM users WHERE username = '"
-                + username + "' AND password_hash = '"
-                + PasswordService.md5(password) + "'";
+                + username + "'";
 
         try (Connection conn = openConnection();
              Statement stmt = conn.createStatement();
@@ -93,6 +91,21 @@ public class Lab10SqlInjectionController {
 
             Map<String, Object> user = rows.get(0);
 
+            // FIXED: [A04-Lab7] Cryptographic Failure - the password is verified with
+            // bcrypt instead of being compared inside the SQL text. A bcrypt hash is
+            // salted, so the database cannot compare it: the check has to happen in
+            // Java with BCrypt.checkpw, which re-derives the hash using the salt
+            // embedded in the stored value.
+            //
+            // The injection above is still exploitable, which is Lab 10's own flaw:
+            // the attacker controls the WHERE clause, so "admin' --" selects the
+            // administrator and the password check is skipped for a query that was
+            // manipulated. The check is only applied when the query returned the row
+            // that the literal username would have selected.
+            if (!isInjected(username, user) && !PasswordService.matches(password, (String) user.get("password_hash"))) {
+                return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
+            }
+
             return ResponseEntity.ok(Map.of(
                     "token", issueToken(user),
                     "user", user));
@@ -101,6 +114,21 @@ public class Lab10SqlInjectionController {
                     "error", "Database error",
                     "detail", e.getMessage()));
         }
+    }
+
+    /**
+     * Reports whether the injected query returned a row that the literal username
+     * could not have selected on its own.
+     *
+     * <p>Used by the login so that the bcrypt check can be applied to a legitimate
+     * login without closing the SQL injection that Lab 10 demonstrates. When the
+     * requested username is a plain value, the query returns exactly the row with
+     * that username. When the username carries an injection, the returned row is
+     * a different account - which is precisely the bypass.</p>
+     */
+    private boolean isInjected(String requestedUsername, Map<String, Object> returnedUser) {
+        String returnedUsername = String.valueOf(returnedUser.get("username"));
+        return !returnedUsername.equals(requestedUsername);
     }
 
     /**

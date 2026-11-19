@@ -151,7 +151,9 @@ public class Lab5DefaultAdminController {
         Map<String, Object> values = new HashMap<>();
         values.put("username", request.username());
         values.put("email", request.email());
-        values.put("password_hash", PasswordService.md5(request.password()));
+        // FIXED: [A04-Lab7] the new administrator's password is stored as a bcrypt
+        // hash rather than an unsalted MD5 digest.
+        values.put("password_hash", PasswordService.hash(request.password()));
         values.put("role", "admin");
         values.put("full_name", request.username());
         values.put("sort_code", "20-00-00");
@@ -189,7 +191,8 @@ public class Lab5DefaultAdminController {
                     .body(Map.of("error", "New password must be at least 12 characters"));
         }
 
-        users.updatePasswordHash(user.getId(), PasswordService.md5(request.newPassword()));
+        // FIXED: [A04-Lab7] the replacement password is stored as a bcrypt hash.
+        users.updatePasswordHash(user.getId(), PasswordService.hash(request.newPassword()));
         users.clearMustChangePassword(user.getId());
 
         return ResponseEntity.ok(Map.of("updated", true));

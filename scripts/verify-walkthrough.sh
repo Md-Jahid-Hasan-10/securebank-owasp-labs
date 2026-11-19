@@ -112,11 +112,39 @@ else
   PASS=$((PASS + 1))
 fi
 
-echo "== Lab 7: MD5 =="
-check "GET /api/a04/hashes" \
-  "$(curl -s "${AUTH[@]}" "$API/api/a04/hashes")" '482c811da5d5b4bc6d497ffa98491e38'
-check "GET /api/a04/crack" \
-  "$(curl -s "${AUTH[@]}" "$API/api/a04/crack")" 'password123'
+echo "== Lab 7: MD5 (fixed on this branch) =="
+WALK_HASHES_OUT="$(curl -s "${AUTH[@]}" "$API/api/a04/hashes")"
+if [[ "$WALK_HASHES_OUT" == *'482c811da5d5b4bc6d497ffa98491e38'* ]]; then
+  printf '\033[31m  FAIL\033[0m GET /api/a04/hashes does not return MD5 digests\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m GET /api/a04/hashes does not return MD5 digests\n'
+  PASS=$((PASS + 1))
+fi
+if [[ "$WALK_HASHES_OUT" == *'password_hash":"(redacted)"'* ]]; then
+  printf '\033[32m  PASS\033[0m the hashes are redacted\n'
+  PASS=$((PASS + 1))
+else
+  printf '\033[31m  FAIL\033[0m the hashes are redacted\n'
+  FAIL=$((FAIL + 1))
+fi
+WALK_CRACK_OUT="$(curl -s "${AUTH[@]}" "$API/api/a04/crack")"
+if [[ "$WALK_CRACK_OUT" == *'password123'* ]]; then
+  printf '\033[31m  FAIL\033[0m GET /api/a04/crack does not crack the password\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m GET /api/a04/crack does not crack the password\n'
+  PASS=$((PASS + 1))
+fi
+WALK_LOGIN_OUT="$(curl -s -X POST "$API/api/auth/login" -H 'Content-Type: application/json' \
+  -d '{"username":"alice","password":"password123"}')"
+if [[ "$WALK_LOGIN_OUT" == *'"token"'* ]]; then
+  printf '\033[32m  PASS\033[0m alice can still log in with her seeded password\n'
+  PASS=$((PASS + 1))
+else
+  printf '\033[31m  FAIL\033[0m alice can still log in with her seeded password\n'
+  FAIL=$((FAIL + 1))
+fi
 
 echo "== Lab 9: PII =="
 check "GET /api/a04/profile leaks the account number" \

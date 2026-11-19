@@ -372,15 +372,27 @@ labs:
          ```
     hint: >-
       `hashcat -m 0` is raw MD5. Why does the absence of a salt matter so much?
+      The hashes are no longer MD5 and the endpoint no longer hands them out -
+      try it and see what comes back.
     fix: >-
-      Use a deliberately slow, salted password hashing function:
+      Passwords are stored with bcrypt, a deliberately slow, salted password
+      hashing function:
 
       ```java
       String hash = BCrypt.hashpw(password, BCrypt.gensalt(12));
       boolean ok = BCrypt.checkpw(password, hash);
       ```
 
-      Never use MD5, SHA-1 or SHA-256 alone for passwords.
+      Each hash carries its own random salt, so the same password produces a
+      different stored value for every account and a single rainbow table no
+      longer attacks them all at once. Each verification attempt costs roughly
+      100ms of CPU, so an offline guess is orders of magnitude more expensive
+      than it was against an MD5 digest. Never use MD5, SHA-1 or SHA-256 alone
+      for passwords.
+
+      The hash store is no longer exposed through the API either: `/api/a04/hashes`
+      reports the algorithm and redacts the stored values, and the in-process
+      cracker that used to demonstrate the offline attack has been removed.
     source: core/src/main/java/com/securebank/lab/a04/Lab7CryptoController.java
     anchors:
       - "public ResponseEntity<?> hashes()"

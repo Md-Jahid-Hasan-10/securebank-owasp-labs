@@ -24,6 +24,17 @@
       Authentication is hand-rolled in com.securebank.core.security so that every
       flaw is explicit and greppable via the "VULN:" comment convention.
     -->
+    <!--
+      FIXED: [A04-Lab7] Cryptographic Failure - bcrypt is used for password hashing.
+      Only spring-security-crypto is pulled in, NOT spring-boot-starter-security:
+      the starter would auto-configure the whole security filter chain and silently
+      remediate Labs 1, 2, 15, 18, 21 and 25. The crypto module on its own provides
+      BCrypt without any auto-configuration.
+    -->
+    <dependency>
+      <groupId>org.springframework.security</groupId>
+      <artifactId>spring-security-crypto</artifactId>
+    </dependency>
     <dependency>
       <groupId>org.springframework.boot</groupId>
       <artifactId>spring-boot-starter-jdbc</artifactId>
