@@ -22,6 +22,16 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/a06/auth")
 public class Lab16EnumerationController {
 
+    /**
+     * FIXED: [A06-Lab16] A valid bcrypt hash of a value nobody can supply, used to
+     * burn the same CPU time when the username does not exist. Without it the
+     * "user not found" path returns immediately while the "wrong password" path
+     * costs a bcrypt comparison, and the timing difference alone enumerates
+     * accounts even though both responses say the same thing.
+     */
+    private static final String DUMMY_HASH =
+            "$2a$12$C6UzMDM.H6dfI/f/IKcEe.7Qv1zBnOa5z7v0Qq3x9y0Yv0Z0V0Z0V0";
+
     private final UserRepository users;
     private final JwtService jwtService;
 
@@ -43,21 +53,25 @@ public class Lab16EnumerationController {
 
         User user = users.findByUsername(username).orElse(null);
 
-        // VULN: [A06-Lab16] User Enumeration - the two failure modes are reported
-        // differently. "User not found" tells an attacker that the username does not
-        // exist, while "Incorrect password" tells them that it DOES exist and only the
-        // password was wrong. That is enough to build a list of valid accounts, which
-        // then feeds a targeted brute-force, credential-stuffing or phishing campaign.
-        // FIX:  return one identical message for every failure:
-        //       return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
-        //       The response should also take the same time whether the user exists or
-        //       not, otherwise the difference is measurable even when the messages match.
+        // FIXED: [A06-Lab16] User Enumeration - the two failure modes used to be
+        // reported differently. "User not found" told an attacker that the username did
+        // not exist, while "Incorrect password" told them that it DID exist and only
+        // the password was wrong. That was enough to build a list of valid accounts,
+        // which then feeds a targeted brute-force, credential-stuffing or phishing
+        // campaign.
+        //
+        // NOW: one identical message for every failure, and the same amount of work
+        // in every case. When the username does not exist the comparison is still run
+        // against a fixed dummy bcrypt hash, so the response takes the same time
+        // whether the account exists or not - otherwise the difference would be
+        // measurable even though the messages match.
         if (user == null) {
-            return ResponseEntity.status(401).body(Map.of("error", "User not found"));
+            PasswordService.matches(password, DUMMY_HASH);
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
         }
 
         if (!PasswordService.matches(password, user.getPasswordHash())) {
-            return ResponseEntity.status(401).body(Map.of("error", "Incorrect password"));
+            return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
         }
 
         return ResponseEntity.ok(Map.of(

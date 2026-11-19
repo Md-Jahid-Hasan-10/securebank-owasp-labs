@@ -43,21 +43,23 @@ public class Lab23VerboseErrorController {
      */
     @GetMapping("/account-summary")
     public ResponseEntity<?> accountSummary(@RequestParam("id") String id) {
-        // VULN: [A10-Lab23] Mishandling of Exceptional Conditions - the id is converted
-        // to an integer without any validation or error handling, so "abc" raises an
-        // unhandled NumberFormatException. Because server.error.include-stacktrace is
-        // 'always', the full stack trace is rendered back to the client, revealing file
-        // paths, library versions, the Spring configuration (including jwt.secret and
-        // the datasource URL) and the internal call chain.
-        // FIX:  validate the input and handle the conversion explicitly:
-        //       int accountId;
-        //       try {
-        //           accountId = Integer.parseInt(id);
-        //       } catch (NumberFormatException e) {
-        //           return ResponseEntity.badRequest().body(Map.of("error", "Invalid id"));
-        //       }
-        //       and set server.error.include-stacktrace=never in production.
-        int accountId = Integer.parseInt(id);
+        // FIXED: [A10-Lab23] Mishandling of Exceptional Conditions - the id used to
+        // be converted to an integer without any validation or error handling, so
+        // "abc" raised an unhandled NumberFormatException. The full stack trace was
+        // rendered back to the client, revealing file paths, library versions, the
+        // Spring configuration (including jwt.secret and the datasource URL) and the
+        // internal call chain.
+        //
+        // NOW: the conversion is handled explicitly and the request is rejected with
+        // a generic 400. No exception escapes the controller, so there is no stack
+        // trace to leak. server.error.include-stacktrace is also set to never in
+        // application.yml, so even an unforeseen error does not render one.
+        int accountId;
+        try {
+            accountId = Integer.parseInt(id);
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid id"));
+        }
 
         Account account = accounts.findById((long) accountId).orElse(null);
         if (account == null) {
@@ -124,7 +126,10 @@ public class Lab23VerboseErrorController {
         leak.put("server.error.include-stacktrace", environment.getProperty("server.error.include-stacktrace"));
         // FIXED: [A10-Lab23] The signing secret is never echoed in a response body.
         leak.put("jwt.secret", environment.getProperty("jwt.secret") == null ? null : "[redacted]");
-        leak.put("spring.datasource.url", environment.getProperty("spring.datasource.url"));
+        // FIXED: [A10-Lab23] The datasource URL is no longer echoed either. It names
+        // the database host, the port and the database name, which is the internal
+        // topology an attacker uses to reach the database directly.
+        leak.put("spring.datasource.url", "[redacted]");
         leak.put("tip", "Request /api/a10/transfers/account-summary?id=abc for the real thing.");
         return ResponseEntity.ok(leak);
     }

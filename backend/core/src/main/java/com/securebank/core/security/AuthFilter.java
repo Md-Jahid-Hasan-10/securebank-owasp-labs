@@ -34,18 +34,17 @@ public class AuthFilter extends OncePerRequestFilter {
      * Endpoints that must never be gated. Everything else requires a valid principal.
      */
     private static boolean isPublic(String path) {
-        // Lab 22 (A08) - uploaded files are public so the upload lab can serve
-        // them back. Unchanged by this fix.
-        if (path.startsWith("/uploads/")) {
-            return true;
-        }
-
         // FIXED: [A02-Lab6] Sensitive File Exposure - /.env, /.git/config and
         // /backup.zip are no longer whitelisted as public. They were reachable by
         // any anonymous client, which handed over the environment file and the
         // whole database. They are not served at all any more, and even if one
         // were reintroduced into a served directory, it would now require a
         // valid principal.
+        //
+        // FIXED: [A08-Lab22] Unrestricted File Upload - "/uploads/" is no longer
+        // whitelisted. Uploaded files used to be served anonymously from a static
+        // handler; they now live outside the web root and are downloaded through an
+        // authenticated endpoint that sets Content-Disposition: attachment.
         return path.startsWith("/api/auth/")
                 || path.startsWith("/api/a05/auth/")
                 || path.startsWith("/api/a06/auth/")
@@ -89,35 +88,43 @@ public class AuthFilter extends OncePerRequestFilter {
 
         String token = header.substring("Bearer ".length()).trim();
 
-        // VULN: [A10-Lab25] Insecure Fallback / Authentication Bypass on Exception.
-        // A bare `catch` swallows EVERY failure - malformed base64, bad signature,
-        // expired token, unexpected type - and silently falls back to user_id 1, which
-        // is the admin account. The "safe" default is actually the most privileged
-        // possible value, so sending a deliberately invalid token is enough to become
-        // admin. This is a fail-OPEN bug: an error in authentication grants access.
-        // FIX:  catch only jwt.InvalidTokenError and return 401. Never fall back to a
-        //       default identity. Authentication must always fail CLOSED.
-        Long userId = 1L;
-        String username = "admin";
-        String role = "admin";
-
+        // FIXED: [A10-Lab25] Insecure Fallback / Authentication Bypass on Exception.
+        // A bare `catch` swallowed EVERY failure - malformed base64, bad signature,
+        // expired token, unexpected type - and silently fell back to user_id 1, which
+        // is the admin account. The "safe" default was actually the most privileged
+        // possible value, so sending a deliberately invalid token was enough to become
+        // admin. This was a fail-OPEN bug: an error in authentication granted access.
+        //
+        // NOW: the principal is built ONLY from a successfully verified token. There is
+        // no default identity and no catch-all - a token that cannot be verified is
+        // rejected with 401. Authentication always fails CLOSED.
+        JwtService.TokenPayload payload;
         try {
-            JwtService.TokenPayload payload = jwtService.decode(token);
-            if (payload.userId() != null) {
-                userId = payload.userId();
-            }
-            if (payload.username() != null) {
-                username = payload.username();
-            }
-            if (payload.role() != null) {
-                role = payload.role();
-            }
-        } catch (Exception ignored) {
-            // VULN: [A10-Lab25] the swallowed exception leaves the principal as admin.
-            log.debug("token validation failed, falling back to default principal");
+            payload = jwtService.decode(token);
+        } catch (io.jsonwebtoken.JwtException | IllegalArgumentException e) {
+            // Malformed, unsigned, tampered-with or expired token. The reason is logged
+            // for the operator but never returned to the caller.
+            log.warn("token validation failed: {}", e.getMessage());
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"error\":\"Invalid token\"}");
+            return;
         }
 
-        CurrentUserHolder.set(new CurrentUser(userId, username, role));
+        if (payload.userId() == null) {
+            // FIXED: [A10-Lab25] a token without a subject cannot identify anybody, so
+            // it must not be allowed to produce a principal at all.
+            log.warn("token validation failed: token carries no user id");
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.setContentType("application/json");
+            response.getWriter().write("{\"error\":\"Invalid token\"}");
+            return;
+        }
+
+        CurrentUserHolder.set(new CurrentUser(
+                payload.userId(),
+                payload.username() == null ? "" : payload.username(),
+                payload.role() == null ? "user" : payload.role()));
 
         try {
             chain.doFilter(request, response);

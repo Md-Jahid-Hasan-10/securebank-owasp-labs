@@ -78,15 +78,15 @@
       <scope>runtime</scope>
     </dependency>
     <!--
-      VULN: [A08-Lab20] Insecure Deserialization - commons-collections 3.2.1 provides the
-      InvokerTransformer gadget chain used by Lab 20's Jackson polymorphic deserialization RCE.
-      FIX:  remove this dependency and never enable default typing on untrusted input.
+      FIXED: [A08-Lab20] Insecure Deserialization - commons-collections 3.2.1 used to be
+      on the classpath, providing the InvokerTransformer gadget chain behind Lab 20's
+      Jackson polymorphic deserialization RCE.
+
+      The dependency is now removed entirely, and the import endpoint parses into a
+      fixed target type with an ObjectMapper that has no polymorphic default typing.
+      A vulnerable library on the classpath is a liability even when the code does not
+      currently reach it, so it is deleted rather than merely left unused.
     -->
-    <dependency>
-      <groupId>commons-collections</groupId>
-      <artifactId>commons-collections</artifactId>
-      <version>3.2.1</version>
-    </dependency>
 
     <dependency>
       <groupId>org.springframework.boot</groupId>
@@ -116,9 +116,14 @@
         </excludes>
       </resource>
       <!--
-        The static tree is packaged separately so that the asset and upload
-        directories are still present in the artifact, but without any secret
-        file that may have been dropped into them.
+        The static tree is packaged separately so that the asset directory is still
+        present in the artifact, but without any secret file that may have been
+        dropped into it.
+
+        FIXED: [A08-Lab22] the uploads directory is no longer included. Uploads live
+        outside the web root (data/uploads) and are served only through the
+        authenticated download endpoint, so nothing a user uploads can ever be
+        packaged into the artifact or mapped to a static URL.
       -->
       <resource>
         <directory>src/main/resources/static</directory>
@@ -126,7 +131,6 @@
         <filtering>false</filtering>
         <includes>
           <include>assets/**</include>
-          <include>uploads/**</include>
         </includes>
       </resource>
     </resources>

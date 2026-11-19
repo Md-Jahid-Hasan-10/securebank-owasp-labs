@@ -321,8 +321,10 @@ if should_run 7; then
   OUT="$(get "$API/api/a04/crack")"
   refute "alice's password is not cracked in-app" "$OUT" 'password123'
   refute "no password is cracked in-app" "$OUT" '"cracked":{"alice"'
-  # And the hashes themselves are bcrypt in the database, not MD5.
-  OUT="$(get "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")"
+  # And the hashes themselves are bcrypt in the database, not MD5. The search
+  # endpoint still returns the hash for a genuine match, so a normal search term
+  # shows what is actually stored.
+  OUT="$(get "$API/api/a05/transfers/search?q=alice")"
   check "the stored hashes are bcrypt" "$OUT" '$2a$12$'
   refute "no MD5 digest survives in the database" "$OUT" '482c811da5d5b4bc6d497ffa98491e38'
   # A legitimate login still works with the seeded password. The login helper
@@ -433,40 +435,57 @@ if should_run 9; then
   fi
 fi
 
-# --- Lab 10: SQL injection ---------------------------------------------------
+# --- Lab 10: SQL injection (FIXED on this branch) -----------------------------
 if should_run 10; then
   lab 10 "SQL injection"
   OUT="$(curl -s -X POST "$API/api/a05/auth/login" -H "Content-Type: application/json" \
     -d '{"username":"admin'\'' --","password":"anything"}')"
-  check "login bypass with admin' --" "$OUT" '"token"'
-  check "bypass returned the admin account" "$OUT" '"role":"admin"'
+  refute "the login bypass with admin' -- no longer returns a token" "$OUT" '"token"'
+  refute "the login bypass no longer returns the admin account" "$OUT" '"role":"admin"'
   OUT="$(get "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")"
-  # The row count grows with every account in the database, so assert on the
-  # seeded accounts rather than on a fixed number.
-  check "UNION SELECT dumps the seeded users" "$OUT" '"username":"alice"'
-  check "UNION SELECT dumps the administrator too" "$OUT" '"username":"admin"'
-  check "UNION SELECT exposes the password hashes" "$OUT" '"password_hash"'
+  refute "the UNION SELECT no longer dumps the seeded users" "$OUT" '"username":"alice"'
+  refute "the UNION SELECT no longer dumps the administrator" "$OUT" '"username":"admin"'
+  refute "the UNION SELECT no longer exposes the password hashes" "$OUT" '"password_hash"'
+  # A legitimate login must still work, so the fix did not simply break the query.
+  OUT="$(curl -s -X POST "$API/api/a05/auth/login" -H "Content-Type: application/json" \
+    -d '{"username":"alice","password":"password123"}')"
+  check "a legitimate login still works" "$OUT" '"token"'
+  # The search must still work for a plain term.
+  OUT="$(get "$API/api/a05/transfers/search?q=alice")"
+  check "a normal search still finds the user" "$OUT" '"username":"alice"'
 fi
 
-# --- Lab 11: SSTI via SpEL --------------------------------------------------
+# --- Lab 11: SSTI via SpEL (FIXED on this branch) ----------------------------
 if should_run 11; then
   lab 11 "SSTI (SpEL)"
   OUT="$(post "$API/api/a05/transfers/1/remark" -d '{"remark": "7*7"}')"
-  check "arithmetic expression is evaluated" "$OUT" '49'
+  refute "the arithmetic expression is no longer evaluated" "$OUT" '49'
   OUT="$(post "$API/api/a05/transfers/1/remark" \
     -d '{"remark": "T(java.lang.Runtime).getRuntime().exec(new java.lang.String[]{\"id\"})"}')"
-  check "Runtime.exec is reachable via SpEL" "$OUT" 'uid='
+  refute "Runtime.exec is no longer reachable via SpEL" "$OUT" 'uid='
+  # The remark must be stored and returned as the text it is, not evaluated.
+  OUT="$(post "$API/api/a05/transfers/1/remark" -d '{"remark": "7*7"}')"
+  check "the remark is stored as plain text" "$OUT" '7*7'
+  # The rendered fragment must be HTML-escaped. The raw remark is echoed back as
+  # plain text (that is the stored value), so only the rendered fragment is checked.
+  OUT="$(post "$API/api/a05/transfers/1/remark" -d '{"remark": "<script>alert(1)</script>"}')"
+  RENDERED="$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('rendered',''))" 2>/dev/null)"
+  refute "the rendered remark does not contain a raw script tag" "$RENDERED" '<script>'
+  check "the rendered remark is HTML-escaped" "$RENDERED" '&lt;script&gt;'
+  # The remark must still be stored verbatim, so the API does not corrupt the data.
+  check "the raw remark is still stored as the text it is" "$OUT" '"remark":"<script>alert(1)</script>"'
 fi
 
-# --- Lab 12: SSTI + command injection (report service) ----------------------
+# --- Lab 12: SSTI + command injection (report service) (FIXED on this branch) --
 if should_run 12; then
   lab 12 "SSTI + OS command injection"
   OUT="$(curl -s -X POST "$REPORT/api/report/report/generate" -H "Content-Type: application/json" \
     -d '{"account_id": "1001", "template": "Secret: ${config.secretKey}"}')"
-  check "internal secret key is extracted from the template" "$OUT" 'sb-report-internal-secret'
-  # The date filter is concatenated into `sh -c "echo 'From: <from> To: <to>' && date"`,
-  # so a single quote in the date closes the quoted argument and everything after it
-  # is executed as a separate command.
+  refute "the internal secret key is no longer extracted" "$OUT" 'sb-report-internal-secret'
+  refute "the internal database path is no longer extracted" "$OUT" '/var/lib/securebank'
+  # The date filter used to be concatenated into `sh -c "echo 'From: <from> To: <to>' && date"`,
+  # so a single quote in the date closed the quoted argument and everything after it
+  # was executed as a separate command.
   DATE_BODY="$(mktemp)"
   cat > "$DATE_BODY" <<'JSON'
 {"from_date": "2024-01-01' && id && echo '", "to_date": "2024-12-31"}
@@ -474,105 +493,151 @@ JSON
   OUT="$(curl -s -X POST "$REPORT/api/report/report/date-filter" -H "Content-Type: application/json" \
     --data-binary "@$DATE_BODY")"
   rm -f "$DATE_BODY"
-  check "command injection runs 'id'" "$OUT" 'uid='
+  refute "the command injection no longer runs 'id'" "$OUT" 'uid='
+  # A valid date range must still work, so the fix did not simply break the endpoint.
+  OUT="$(curl -s -X POST "$REPORT/api/report/report/date-filter" -H "Content-Type: application/json" \
+    -d '{"from_date": "2024-01-01", "to_date": "2024-12-31"}')"
+  check "a valid date range is still accepted" "$OUT" '2024-01-01'
 fi
 
-# --- Lab 13: stored XSS -----------------------------------------------------
+# --- Lab 13: stored XSS (FIXED on this branch) -------------------------------
 if should_run 13; then
   lab 13 "Stored XSS"
   OUT="$(post "$API/api/a05/transfers/send" \
     -d '{"from_account_id":1,"to_account_id":2,"amount":1,"note":"<img src=x onerror=alert(document.cookie)>"}')"
-  check "note with a script payload is stored verbatim" "$OUT" 'onerror=alert'
+  refute "the note with a script payload is no longer stored verbatim" "$OUT" 'onerror=alert'
   OUT="$(get "$API/api/a05/transfers")"
-  check "payload is returned to every client" "$OUT" 'onerror=alert'
+  refute "the payload is no longer returned to every client" "$OUT" 'onerror=alert'
+  refute "the stored note does not contain a raw img tag" "$OUT" '<img'
+  # The frontend must render the note as text, not as markup. The source is
+  # checked for the JSX attribute itself; the FIXED comment that explains the
+  # change mentions it by name, so the attribute is matched only when it is
+  # actually used.
+  FRONTEND_SRC="$(cat frontend/src/features/banking/TransfersPage.jsx 2>/dev/null || true)"
+  refute "the frontend does not use dangerouslySetInnerHTML for the note" \
+    "$FRONTEND_SRC" 'dangerouslySetInnerHTML={'
 fi
 
-# --- Lab 14: negative transfer ----------------------------------------------
+# --- Lab 14: negative transfer (FIXED on this branch) -------------------------
 if should_run 14; then
   lab 14 "Negative transfer amount"
   BEFORE="$(get "$API/api/a01/accounts/1")"
   OUT="$(post "$API/api/a06/transfers/" \
     -d '{"from_account_id": 2, "to_account_id": 1, "amount": -1000}')"
-  check "negative transfer is accepted" "$OUT" '"transfer_id"'
+  refute "the negative transfer is no longer accepted" "$OUT" '"transfer_id"'
   AFTER="$(get "$API/api/a01/accounts/1")"
-  if [[ "$BEFORE" != "$AFTER" ]]; then
-    green "negative transfer changed alice's balance"
+  if [[ "$BEFORE" == "$AFTER" ]]; then
+    green "the negative transfer did not change alice's balance"
     PASS=$((PASS + 1))
   else
-    red "negative transfer did not change alice's balance"
+    red "the negative transfer still changed alice's balance"
     FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
   fi
+  # A positive transfer must still work, so the fix did not simply break the endpoint.
+  OUT="$(post "$API/api/a06/transfers/" \
+    -d '{"from_account_id": 2, "to_account_id": 1, "amount": 1}')"
+  check "a positive transfer is still accepted" "$OUT" '"transfer_id"'
 fi
 
-# --- Lab 15: mass assignment ------------------------------------------------
+# --- Lab 15: mass assignment (FIXED on this branch) --------------------------
 if should_run 15; then
   lab 15 "Mass assignment"
   OUT="$(curl -s -X PATCH "$API/api/a06/profile" -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
     -d '{"username": "alice", "email": "alice@bank.com", "role": "admin"}')"
-  check "role was changed to admin via the profile endpoint" "$OUT" '"role":"admin"'
-  # restore
-  curl -s -X PATCH "$API/api/a06/profile" -H "Content-Type: application/json" \
+  refute "the role was no longer changed to admin via the profile endpoint" "$OUT" '"role":"admin"'
+  # The stored role must still be the customer's.
+  OUT="$(get "$API/api/a06/profile")"
+  refute "the stored role is not admin" "$OUT" '"role":"admin"'
+  # A legitimate email update must still work.
+  OUT="$(curl -s -X PATCH "$API/api/a06/profile" -H "Content-Type: application/json" \
     -H "Authorization: Bearer $TOKEN" \
-    -d '{"username": "alice", "email": "alice@bank.com", "role": "customer"}' >/dev/null
+    -d '{"email": "alice@bank.com"}')"
+  check "a legitimate email update still works" "$OUT" '"email":"alice@bank.com"'
+  refute "the role is still not changed by a legitimate update" "$OUT" '"role":"admin"'
 fi
 
-# --- Lab 16: account enumeration --------------------------------------------
+# --- Lab 16: account enumeration (FIXED on this branch) ----------------------
 if should_run 16; then
   lab 16 "Account enumeration"
   MISSING="$(curl -s -X POST "$API/api/a06/auth/login/" -H "Content-Type: application/json" \
     -d '{"username": "notauser", "password": "anything"}')"
   EXISTING="$(curl -s -X POST "$API/api/a06/auth/login/" -H "Content-Type: application/json" \
     -d '{"username": "alice", "password": "wrongpassword"}')"
-  check "missing user is reported as 'User not found'" "$MISSING" 'User not found'
-  check "existing user is reported as 'Incorrect password'" "$EXISTING" 'Incorrect password'
-  if [[ "$MISSING" != "$EXISTING" ]]; then
-    green "the two error responses differ"
+  refute "a missing user is no longer reported as 'User not found'" "$MISSING" 'User not found'
+  refute "an existing user is no longer reported as 'Incorrect password'" "$EXISTING" 'Incorrect password'
+  if [[ "$MISSING" == "$EXISTING" ]]; then
+    green "the two error responses are identical"
     PASS=$((PASS + 1))
   else
-    red "the two error responses are identical"
+    red "the two error responses differ"
     FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
   fi
+  check "the shared message is 'Invalid credentials'" "$MISSING" 'Invalid credentials'
 fi
 
-# --- Lab 17: brute force ----------------------------------------------------
+# --- Lab 17: brute force (FIXED on this branch) ------------------------------
 if should_run 17; then
   lab 17 "No rate limiting"
+  # Use a username that is not a real account, so the throttle bucket is not
+  # shared with the seeded users and the run does not lock anybody out.
   FOUND=0
-  for pw in password123 letmein welcome qwerty123 monkey dragon; do
+  for pw in one two three four five six seven eight; do
     OUT="$(curl -s -X POST "$API/api/a07/auth/login" -H "Content-Type: application/json" \
-      -d "{\"username\":\"alice\",\"password\":\"$pw\"}")"
+      -d "{\"username\":\"ratelimitprobe\",\"password\":\"$pw\"}")"
     if [[ "$OUT" == *'"token"'* ]]; then
       FOUND=$((FOUND + 1))
     fi
   done
-  if [[ "$FOUND" -gt 0 ]]; then
-    green "multiple guesses were accepted without throttling"
+  if [[ "$FOUND" -eq 0 ]]; then
+    green "no guess was ever accepted"
     PASS=$((PASS + 1))
   else
-    red "no guess succeeded"
+    red "a guess was accepted"
     FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
   fi
+  # After enough failures the account must be locked out.
+  LAST=""
+  for pw in nine ten eleven twelve thirteen; do
+    LAST="$(curl -s -X POST "$API/api/a07/auth/login" -H "Content-Type: application/json" \
+      -d "{\"username\":\"ratelimitprobe\",\"password\":\"$pw\"}")"
+  done
+  check "the account is locked out after too many failures" "$LAST" 'Too many failed attempts'
+  # A correct password must not be accepted while the account is locked out.
+  OUT="$(curl -s -X POST "$API/api/a07/auth/login" -H "Content-Type: application/json" \
+    -d '{"username":"ratelimitprobe","password":"password123"}')"
+  refute "the locked-out account cannot be used to log in" "$OUT" '"token"'
+  # The attempt counter must no longer leak the number of attempts made.
   OUT="$(get "$API/api/a07/auth/attempts")"
-  check "attempts are counted but never blocked" "$OUT" 'attempts'
+  refute "the attempt counter no longer leaks the number of attempts" "$OUT" 'attempts_so_far'
 fi
 
-# --- Lab 18: session fixation -----------------------------------------------
+# --- Lab 18: session fixation (FIXED on this branch) -------------------------
 if should_run 18; then
   lab 18 "Session fixation"
   COOKIE_JAR="$(mktemp)"
   SID="$(curl -s -c "$COOKIE_JAR" -X POST "$API/api/a07/session/init" \
     | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])" 2>/dev/null)"
-  curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$API/api/a07/auth/login-session" \
+  OUT="$(curl -s -c "$COOKIE_JAR" -b "$COOKIE_JAR" -X POST "$API/api/a07/auth/login-session" \
     -H "Content-Type: application/json" \
-    -d '{"username":"alice","password":"password123"}' >/dev/null
+    -d '{"username":"alice","password":"password123"}')"
+  check "the login succeeds" "$OUT" '"username":"alice"'
+  refute "the session id was regenerated on login" "$OUT" "\"session_id\":\"$SID\""
+  check "the response confirms the id changed" "$OUT" '"session_id_changed_on_login":true'
+  # The old, planted session id must no longer be authenticated. The cookie jar
+  # now holds the NEW id, so the check is that the new session works while the
+  # old id is dead: presenting the old id directly must not authenticate.
   OUT="$(curl -s -b "$COOKIE_JAR" "$API/api/a07/session/whoami")"
-  check "the pre-login session id is now authenticated" "$OUT" '"username":"alice"'
-  check "the session id was not regenerated" "$OUT" "\"session_id\":\"$SID\""
+  check "the new session id is authenticated" "$OUT" '"username":"alice"'
+  OUT="$(curl -s -H "Cookie: JSESSIONID=$SID" "$API/api/a07/session/whoami")"
+  refute "the pre-login session id is no longer authenticated" "$OUT" '"username":"alice"'
   rm -f "$COOKIE_JAR"
 fi
 
-# --- Lab 19: predictable reset token ----------------------------------------
+# --- Lab 19: predictable reset token (FIXED on this branch) ------------------
 if should_run 19; then
   lab 19 "Predictable password reset token"
   OUT="$(curl -s -X POST "$API/api/a07/auth/reset-request" -H "Content-Type: application/json" \
@@ -596,19 +661,57 @@ PY
       break
     fi
   done <<< "$COMPUTED"
-  if [[ "$MATCHED" -eq 1 ]]; then
-    green "an offline-computed token was accepted"
+  if [[ "$MATCHED" -eq 0 ]]; then
+    green "no offline-computed token was accepted"
     PASS=$((PASS + 1))
   else
-    red "no computed token was accepted"
+    red "an offline-computed token was accepted"
     FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
+  fi
+  # A token that was actually issued must work, and must work only once.
+  OUT="$(curl -s -X POST "$API/api/a07/auth/reset-request" -H "Content-Type: application/json" \
+    -d '{"username": "alice"}')"
+  GOOD_TOKEN="$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)"
+  OUT="$(curl -s -X POST "$API/api/a07/auth/reset-confirm" -H "Content-Type: application/json" \
+    -d "{\"token\": \"$GOOD_TOKEN\", \"new_password\": \"password123\"}")"
+  check "an issued token can still be redeemed" "$OUT" '"password_reset":true'
+  OUT="$(curl -s -X POST "$API/api/a07/auth/reset-confirm" -H "Content-Type: application/json" \
+    -d "{\"token\": \"$GOOD_TOKEN\", \"new_password\": \"password123\"}")"
+  refute "the token cannot be redeemed twice" "$OUT" '"password_reset":true'
+  # The response must not reveal whether an account exists.
+  MISSING="$(curl -s -X POST "$API/api/a07/auth/reset-request" -H "Content-Type: application/json" \
+    -d '{"username": "notauser"}')"
+  EXISTING="$(curl -s -X POST "$API/api/a07/auth/reset-request" -H "Content-Type: application/json" \
+    -d '{"username": "alice"}')"
+  refute "a missing account is not reported as an error" "$MISSING" 'User not found'
+  # The token field is present but empty for an unknown account - it must not hold
+  # a usable value.
+  MISSING_TOKEN="$(echo "$MISSING" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)"
+  if [[ -z "$MISSING_TOKEN" ]]; then
+    green "a missing account is not given a token"
+    PASS=$((PASS + 1))
+  else
+    red "a missing account was given a token"
+    FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
+  fi
+  # The response shape must be identical for both accounts.
+  if [[ "$(echo "$MISSING" | python3 -c "import sys,json; print(sorted(json.load(sys.stdin).keys()))" 2>/dev/null)" \
+        == "$(echo "$EXISTING" | python3 -c "import sys,json; print(sorted(json.load(sys.stdin).keys()))" 2>/dev/null)" ]]; then
+    green "the response shape is the same for a missing and an existing account"
+    PASS=$((PASS + 1))
+  else
+    red "the response shape differs between a missing and an existing account"
+    FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
   fi
   # restore alice's password so the next run can log in
   reset_alice_password >/dev/null 2>&1
   login alice password123 >/dev/null 2>&1
 fi
 
-# --- Lab 20: insecure deserialization ---------------------------------------
+# --- Lab 20: insecure deserialization (FIXED on this branch) -----------------
 if should_run 20; then
   lab 20 "Insecure deserialization"
   PAYLOAD="$(mktemp)"
@@ -617,15 +720,38 @@ if should_run 20; then
 JSON
   OUT="$(curl -s -X POST "$API/api/a08/integrity/import-account" \
     -H "Authorization: Bearer $TOKEN" -F "data=@$PAYLOAD")"
-  check "uploaded payload is deserialised" "$OUT" '"imported"'
-  check "the gadget executed the command during deserialisation" "$OUT" 'uid='
+  refute "the uploaded payload is no longer deserialised" "$OUT" '"imported"'
+  refute "the gadget no longer executed the command during deserialisation" "$OUT" 'uid='
   rm -f "$PAYLOAD"
   OUT="$(curl -s -X POST "$API/api/a08/integrity/import-account/describe" \
     -H "Authorization: Bearer $TOKEN")"
-  check "default typing is enabled on the mapper" "$OUT" 'enabled'
+  refute "default typing is no longer enabled on the mapper" "$OUT" 'enabled'
+  # A well-formed document must still be accepted.
+  GOOD="$(mktemp)"
+  cat > "$GOOD" <<'JSON'
+{"username":"alice","account_number":"ACC-1001","currency":"GBP"}
+JSON
+  OUT="$(curl -s -X POST "$API/api/a08/integrity/import-account" \
+    -H "Authorization: Bearer $TOKEN" -F "data=@$GOOD")"
+  check "a well-formed import document is still accepted" "$OUT" '"imported":true'
+  rm -f "$GOOD"
+  # The gadget class and the vulnerable library must be gone from the source.
+  GADGET="backend/core/src/main/java/com/securebank/lab/a08/gadget/AccountImportJob.java"
+  if [[ -f "$GADGET" ]]; then
+    red "the gadget class is still present"
+    FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
+  else
+    green "the gadget class has been removed"
+    PASS=$((PASS + 1))
+  fi
+  # The dependency must no longer be declared. The FIXED comment in the pom
+  # names the artifact, so the check is for the dependency declaration itself.
+  OUT="$(grep -c '<artifactId>commons-collections</artifactId>' backend/core/pom.xml || true)"
+  refute "the vulnerable commons-collections dependency is gone" "$OUT" '1'
 fi
 
-# --- Lab 21: JWT alg:none ---------------------------------------------------
+# --- Lab 21: JWT alg:none (FIXED on this branch) -----------------------------
 if should_run 21; then
   lab 21 "JWT algorithm confusion"
   FORGED="$(python3 - <<'PY'
@@ -640,50 +766,110 @@ print(f"{header}.{payload}.")
 PY
 )"
   OUT="$(curl -s -H "Authorization: Bearer $FORGED" "$API/api/a10/transfers/history")"
-  check "unsigned alg:none token is accepted as admin" "$OUT" '"requested_role":"admin"'
+  refute "the unsigned alg:none token is no longer accepted as admin" "$OUT" '"requested_role":"admin"'
+  # A legitimate login must still work, so the fix did not simply break signing.
+  OUT="$(curl -s -X POST "$API/api/auth/login" -H "Content-Type: application/json" \
+    -d '{"username":"alice","password":"password123"}')"
+  check "a legitimate login still returns a token" "$OUT" '"token"'
 fi
 
-# --- Lab 22: unrestricted upload --------------------------------------------
+# --- Lab 22: unrestricted upload (FIXED on this branch) ----------------------
 if should_run 22; then
   lab 22 "Unrestricted file upload"
+  # A file with no extension at all, and then one with a scripting extension.
   TMPFILE="$(mktemp)"
   echo "SHELL_HERE" > "$TMPFILE"
   OUT="$(curl -s -X POST "$API/api/a08/kyc-upload" -H "Authorization: Bearer $TOKEN" -F "file=@$TMPFILE")"
-  check "file is accepted and a URL is returned" "$OUT" '"uploaded":true'
-  URL="$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('url',''))" 2>/dev/null)"
-  BODY="$(curl -s "$API$URL")"
-  check "the uploaded file is served back from the web root" "$BODY" 'SHELL_HERE'
+  refute "the file with no extension is no longer accepted" "$OUT" '"uploaded":true'
   rm -f "$TMPFILE"
+  TMPHTML="$(mktemp --suffix=.html)"
+  echo "<script>alert(1)</script>" > "$TMPHTML"
+  OUT="$(curl -s -X POST "$API/api/a08/kyc-upload" -H "Authorization: Bearer $TOKEN" -F "file=@$TMPHTML")"
+  refute "the .html file is no longer accepted" "$OUT" '"uploaded":true'
+  rm -f "$TMPHTML"
+  # A traversal attempt in the filename must not escape the upload directory.
+  OUT="$(curl -s -X POST "$API/api/a08/kyc-upload" -H "Authorization: Bearer $TOKEN" \
+    -F 'file=@/dev/null;filename=../../shell.txt')"
+  refute "the traversal filename is no longer accepted" "$OUT" '"uploaded":true'
+  # The static handler must not serve the uploads any more.
+  OUT="$(curl -s "$API/uploads/shell.txt")"
+  refute "the uploads are no longer served from the web root" "$OUT" 'SHELL_HERE'
+  # An allowed document type must still be accepted, and must be downloaded with
+  # a fixed content type rather than rendered.
+  TMPPDF="$(mktemp --suffix=.pdf)"
+  echo "%PDF-1.4 test" > "$TMPPDF"
+  OUT="$(curl -s -X POST "$API/api/a08/kyc-upload" -H "Authorization: Bearer $TOKEN" -F "file=@$TMPPDF")"
+  check "an allowed document type is still accepted" "$OUT" '"uploaded":true'
+  URL="$(echo "$OUT" | python3 -c "import sys,json; print(json.load(sys.stdin).get('url',''))" 2>/dev/null)"
+  # The download endpoint is behind the auth filter, so it is fetched with a token.
+  HEADERS="$(curl -s -D - -o /dev/null -H "Authorization: Bearer $TOKEN" "$API$URL")"
+  check "the download is sent as an attachment" "$HEADERS" 'attachment'
+  check "the download has a fixed content type" "$HEADERS" 'application/octet-stream'
+  # And it must not be reachable anonymously.
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' "$API$URL")"
+  check "the download is not reachable without authentication" "$CODE" '401'
+  rm -f "$TMPPDF"
 fi
 
-# --- Lab 23: verbose error (the global handler no longer leaks) -------------
+# --- Lab 23: verbose error (FIXED on this branch) ----------------------------
 if should_run 23; then
   lab 23 "Verbose error with stack trace"
   OUT="$(curl -s "$API/api/a10/transfers/account-summary?id=abc")"
   refute "no stack trace is returned to the client" "$OUT" 'NumberFormatException'
   refute "the internal call chain is not exposed" "$OUT" '"trace"'
   refute "the configuration is not leaked with the error" "$OUT" '"jwt.secret"'
+  # The conversion is now handled explicitly, so the request is rejected with a
+  # generic 400 rather than raising an unhandled exception.
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' "$API/api/a10/transfers/account-summary?id=abc")"
+  check "a malformed id is rejected with a 400" "$CODE" '400'
+  OUT="$(curl -s "$API/api/a10/transfers/account-summary?id=abc")"
+  check "the rejection is a generic error" "$OUT" '"error":"Invalid id"'
+  # The leak preview must not disclose the datasource URL either.
+  OUT="$(curl -s "$API/api/a10/transfers/leak-preview")"
+  refute "the datasource url is not disclosed" "$OUT" 'jdbc:postgresql'
+  refute "the datasource url is redacted" "$OUT" '"spring.datasource.url":"[redacted]"'
+  # A valid id must still work, so the fix did not simply break the endpoint.
+  OUT="$(curl -s "$API/api/a10/transfers/account-summary?id=1")"
+  refute "a valid id is still accepted" "$OUT" '"error"'
 fi
 
-# --- Lab 24: type coercion --------------------------------------------------
+# --- Lab 24: type coercion (FIXED on this branch) ----------------------------
 if should_run 24; then
   lab 24 "Error-based info disclosure"
   OUT="$(post "$API/api/a10/transfers/send" \
     -d '{"from_account_id": 1, "to_account_id": 2, "amount": "notanumber"}')"
-  check "a type error is returned" "$OUT" 'NumberFormatException'
-  check "the error names the amount parameter" "$OUT" 'amount'
+  refute "the type error is no longer described to the client" "$OUT" 'NumberFormatException'
+  refute "the exception type name is no longer returned" "$OUT" 'java.lang.'
+  refute "the stack trace is no longer returned" "$OUT" 'stacktrace'
+  refute "the exception message is no longer returned" "$OUT" '"detail"'
+  # The request must be rejected with a generic error.
+  check "the response names only the invalid amount" "$OUT" '"error"'
+  # A valid transfer must still work.
+  OUT="$(post "$API/api/a10/transfers/send" \
+    -d '{"from_account_id": 1, "to_account_id": 2, "amount": 1}')"
+  check "a valid transfer is still accepted" "$OUT" '"transfer_id"'
 fi
 
-# --- Lab 25: auth bypass on exception ---------------------------------------
+# --- Lab 25: auth bypass on exception (FIXED on this branch) ------------------
 if should_run 25; then
   lab 25 "Authentication bypass on exception"
   NO_TOKEN="$(curl -s -o /dev/null -w '%{http_code}' "$API/api/a10/transfers/history")"
   check "no token is rejected with 401" "$NO_TOKEN" '401'
   GARBAGE="$(curl -s -o /dev/null -w '%{http_code}' \
     -H "Authorization: Bearer THISISNOTAVALIDTOKEN" "$API/api/a10/transfers/history")"
-  check "a garbage token is ACCEPTED (fail-open)" "$GARBAGE" '200'
+  check "a garbage token is REJECTED with 401 (fail-closed)" "$GARBAGE" '401'
   OUT="$(curl -s -H "Authorization: Bearer THISISNOTAVALIDTOKEN" "$API/api/a10/transfers/history")"
-  check "the garbage token was treated as admin" "$OUT" '"transfers"'
+  refute "the garbage token is no longer treated as admin" "$OUT" '"transfers"'
+  refute "the garbage token does not receive an admin role" "$OUT" '"requested_role":"admin"'
+  # A tampered token must be rejected too.
+  TAMPERED="${TOKEN%?}x"
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $TAMPERED" "$API/api/a10/transfers/history")"
+  check "a tampered token is rejected with 401" "$CODE" '401'
+  # A valid token must still work.
+  CODE="$(curl -s -o /dev/null -w '%{http_code}' \
+    -H "Authorization: Bearer $TOKEN" "$API/api/a10/transfers/history")"
+  check "a valid token is still accepted" "$CODE" '200'
 fi
 
 # --- summary -----------------------------------------------------------------

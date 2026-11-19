@@ -33,12 +33,10 @@ spring:
     cache: false
 
   jackson:
-    # NOTE: default typing is deliberately NOT enabled globally. Lab 20 builds its own
-    # ObjectMapper with activateDefaultTyping(...) so the vulnerability is local to that
-    # endpoint. Enabling it here would make every @RequestBody in the application
-    # require a "@class" property, which breaks normal JSON parsing.
-    # VULN: [A08-Lab20] Polymorphic default typing lives in
-    #       Lab20DeserializationController#vulnerableMapper - see that class.
+    # FIXED: [A08-Lab20] Polymorphic default typing is disabled and is no longer
+    # enabled anywhere in the application. The import endpoint parses into a fixed
+    # target type with a plain ObjectMapper, so a document can never name the class
+    # it wants instantiated.
     default-typing: disabled
     property-naming-strategy: SNAKE_CASE
 
@@ -55,12 +53,19 @@ jwt:
 # FIXED: [A02-Lab6] The static resource directory is no longer the web root. Assets
 # are served from a dedicated directory that contains no secrets, the dot-prefixed
 # resource handlers are gone and the database backup is written outside the web
-# root. Lab 22 still writes uploads into the upload directory on purpose.
+# root.
+#
+# FIXED: [A08-Lab22] The upload directory has moved out of the static tree as well.
+# Uploads used to live in static/uploads and were mapped as a static resource
+# handler, which meant anything a user uploaded was served back as if it were part
+# of the site. They now live under data/, which is never packaged into the artifact
+# and never mapped to a URL.
 app:
   # The filesystem directory that holds static assets. Contains no secrets.
   asset-dir: ${APP_ASSET_DIR:static/assets}
-  # Where Lab 22 writes uploaded files. Served by its own handler - on purpose.
-  upload-dir: ${APP_UPLOAD_DIR:static/uploads}
+  # Where uploaded files are written. Outside the web root, served only through the
+  # authenticated download endpoint.
+  upload-dir: ${APP_UPLOAD_DIR:data/uploads}
 
 server.servlet:
   # exposed by the Lab 4 debug endpoint

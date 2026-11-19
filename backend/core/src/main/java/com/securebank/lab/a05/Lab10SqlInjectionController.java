@@ -2,6 +2,7 @@ package com.securebank.lab.a05;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.util.ArrayList;
@@ -64,25 +65,26 @@ public class Lab10SqlInjectionController {
         String username = request.username() == null ? "" : request.username();
         String password = request.password() == null ? "" : request.password();
 
-        // VULN: [A05-Lab10] SQL Injection - the username is concatenated straight
-        // into the SQL text, so the attacker controls the statement. The classic
-        // payload is username = "admin' --" which comments out the rest of the
-        // statement, or "' OR '1'='1' --" which matches every row.
-        // FIX:  use parameter binding:
-        //       PreparedStatement ps = conn.prepareStatement(
-        //           "SELECT username, password_hash, email, role, id FROM users "
-        //           + "WHERE username = ?");
-        //       ps.setString(1, username);
-        String sql = "SELECT username, password_hash, email, role, id FROM users WHERE username = '"
-                + username + "'";
+        // FIXED: [A05-Lab10] SQL Injection - the username used to be concatenated
+        // straight into the SQL text, so the attacker controlled the statement. The
+        // classic payload was username = "admin' --", which commented out the rest
+        // of the statement, or "' OR '1'='1' --", which matched every row.
+        //
+        // NOW: the value is bound as a parameter. The statement text is fixed and the
+        // username is only ever a value the driver sends separately, so it can never
+        // change the shape of the query. The database sees a literal string.
+        String sql = "SELECT username, password_hash, email, role, id FROM users WHERE username = ?";
 
         try (Connection conn = openConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, username);
 
             List<Map<String, Object>> rows = new ArrayList<>();
-            while (rs.next()) {
-                rows.add(row(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    rows.add(row(rs));
+                }
             }
 
             if (rows.isEmpty()) {
@@ -97,12 +99,11 @@ public class Lab10SqlInjectionController {
             // Java with BCrypt.checkpw, which re-derives the hash using the salt
             // embedded in the stored value.
             //
-            // The injection above is still exploitable, which is Lab 10's own flaw:
-            // the attacker controls the WHERE clause, so "admin' --" selects the
-            // administrator and the password check is skipped for a query that was
-            // manipulated. The check is only applied when the query returned the row
-            // that the literal username would have selected.
-            if (!isInjected(username, user) && !PasswordService.matches(password, (String) user.get("password_hash"))) {
+            // FIXED: [A05-Lab10] the password check is now applied unconditionally.
+            // The old code skipped it whenever the returned row was not the one the
+            // literal username would have selected - which was precisely the case an
+            // injection produced, so the check was skipped exactly when it mattered.
+            if (!PasswordService.matches(password, (String) user.get("password_hash"))) {
                 return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
             }
 
@@ -117,21 +118,6 @@ public class Lab10SqlInjectionController {
     }
 
     /**
-     * Reports whether the injected query returned a row that the literal username
-     * could not have selected on its own.
-     *
-     * <p>Used by the login so that the bcrypt check can be applied to a legitimate
-     * login without closing the SQL injection that Lab 10 demonstrates. When the
-     * requested username is a plain value, the query returns exactly the row with
-     * that username. When the username carries an injection, the returned row is
-     * a different account - which is precisely the bypass.</p>
-     */
-    private boolean isInjected(String requestedUsername, Map<String, Object> returnedUser) {
-        String returnedUsername = String.valueOf(returnedUser.get("username"));
-        return !returnedUsername.equals(requestedUsername);
-    }
-
-    /**
      * A UNION-injectable search endpoint over the users table.
      */
     @GetMapping("/transfers/search")
@@ -139,20 +125,24 @@ public class Lab10SqlInjectionController {
         // The base query selects five columns. The UNION payload in the walkthrough
         // matches that arity and column order exactly:
         //   ' UNION SELECT username,password_hash,email,role,id FROM users--
-        // VULN: [A05-Lab10] SQL Injection - the search term is concatenated into the
-        // query, so an attacker can append a UNION SELECT and read any table, or
-        // comment out the rest of the statement with --.
-        // FIX:  use a PreparedStatement with a ? placeholder for the search term.
-        String sql = "SELECT username, password_hash, email, role, id FROM users WHERE username LIKE '%"
-                + query + "%'";
+        // FIXED: [A05-Lab10] SQL Injection - the search term used to be concatenated
+        // into the query, so an attacker could append a UNION SELECT and read any
+        // table, or comment out the rest of the statement with --.
+        //
+        // NOW: the term is bound as a parameter and the wildcards are part of the
+        // bound value, so a quote or a UNION in the search term is just text.
+        String sql = "SELECT username, password_hash, email, role, id FROM users WHERE username LIKE ?";
 
         try (Connection conn = openConnection();
-             Statement stmt = conn.createStatement();
-             ResultSet rs = stmt.executeQuery(sql)) {
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+
+            ps.setString(1, "%" + query + "%");
 
             List<Map<String, Object>> rows = new ArrayList<>();
-            while (rs.next()) {
-                rows.add(row(rs));
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    rows.add(row(rs));
+                }
             }
 
             return ResponseEntity.ok(Map.of(

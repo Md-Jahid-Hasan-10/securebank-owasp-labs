@@ -52,18 +52,29 @@ public class Lab14BusinessLogicController {
             return ResponseEntity.badRequest().body(Map.of("error", "Amount is required"));
         }
 
-        // VULN: [A06-Lab14] Insecure Design / Business Logic Flaw - the amount is checked
-        // for presence but never for sign. A negative amount subtracts a negative value
-        // from the sender (increasing their balance) and adds a negative value to the
-        // recipient (decreasing theirs), so the attacker creates money simply by
-        // choosing a negative number.
-        // FIX:  validate the amount as strictly positive at the input boundary:
-        //       if (amount.signum() <= 0) {
-        //           throw new ValidationException("Amount must be positive");
-        //       }
-        //       This is an insecure DESIGN flaw rather than a coding error - the rule
-        //       that a transfer must move a positive sum was never written down, so no
-        //       individual line was ever wrong.
+        // FIXED: [A06-Lab14] Insecure Design / Business Logic Flaw - the amount used to
+        // be checked for presence but never for sign. A negative amount subtracted a
+        // negative value from the sender (increasing their balance) and added a
+        // negative value to the recipient (decreasing theirs), so the attacker created
+        // money simply by choosing a negative number.
+        //
+        // NOW: the business rule is enforced at the input boundary. A transfer must
+        // move a strictly positive sum, and the two accounts must differ. This was an
+        // insecure DESIGN flaw rather than a coding error - the rule that a transfer
+        // must move a positive sum was never written down, so no individual line was
+        // ever wrong.
+        if (amount.signum() <= 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Amount must be positive"));
+        }
+
+        if (request.fromAccountId().equals(request.toAccountId())) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Accounts must differ"));
+        }
+
+        if (from.getBalance().compareTo(amount) < 0) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Insufficient funds"));
+        }
+
         from.setBalance(from.getBalance().subtract(amount));
         to.setBalance(to.getBalance().add(amount));
         accounts.updateBalance(from.getId(), from.getBalance());

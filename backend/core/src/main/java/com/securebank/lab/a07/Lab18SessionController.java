@@ -58,25 +58,27 @@ public class Lab18SessionController {
         String username = body.username() == null ? "" : body.username();
         String password = body.password() == null ? "" : body.password();
 
-        // VULN: [A07-Lab18] Session Fixation - the session id that was in use BEFORE the
-        // login is kept afterwards. The correct behaviour is to issue a brand new
-        // session id at the moment privileges change, because an attacker who can set
-        // a victim's cookie beforehand (via XSS, a shared link, or network access)
-        // already knows the id that will later be authenticated.
-        // FIX:  regenerate the session id on successful authentication:
-        //       HttpSession old = request.getSession(false);
-        //       if (old != null) {
-        //           old.invalidate();
-        //       }
-        //       HttpSession session = request.getSession(true);
-        //       session.setAttribute("userId", user.getId());
-        //       Spring's request.changeSessionId() is the one-call equivalent.
-        HttpSession session = request.getSession(true);
-
+        // FIXED: [A07-Lab18] Session Fixation - the session id that was in use BEFORE
+        // the login used to be kept afterwards. The correct behaviour is to issue a
+        // brand new session id at the moment privileges change, because an attacker
+        // who can set a victim's cookie beforehand (via XSS, a shared link, or network
+        // access) already knows the id that will later be authenticated.
+        //
+        // NOW: the session id is regenerated at the moment the identity is attached.
+        // request.changeSessionId() rotates the id while keeping the session's
+        // attributes, so any id the attacker planted beforehand is abandoned and the
+        // authenticated session carries an id only the victim knows.
         User user = users.findByUsername(username).orElse(null);
         if (user == null || !PasswordService.matches(password, user.getPasswordHash())) {
             return ResponseEntity.status(401).body(Map.of("error", "Invalid credentials"));
         }
+
+        HttpSession session = request.getSession(true);
+        String previousSessionId = session.getId();
+
+        // FIXED: [A07-Lab18] the id changes exactly at the point where privileges
+        // change. Any id that existed before the login is dead.
+        request.changeSessionId();
 
         session.setAttribute("userId", user.getId());
         session.setAttribute("username", user.getUsername());
@@ -84,7 +86,8 @@ public class Lab18SessionController {
 
         return ResponseEntity.ok(Map.of(
                 "session_id", session.getId(),
-                "session_id_changed_on_login", false,
+                "previous_session_id", previousSessionId,
+                "session_id_changed_on_login", !previousSessionId.equals(session.getId()),
                 "user", Map.of(
                         "id", user.getId(),
                         "username", user.getUsername(),

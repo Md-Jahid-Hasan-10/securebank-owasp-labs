@@ -12,12 +12,9 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class WebConfig implements WebMvcConfigurer {
 
-    private final Path uploadDirectory;
     private final Path assetDirectory;
 
-    public WebConfig(@Value("${app.upload-dir:static/uploads}") String uploadDir,
-                     @Value("${app.asset-dir:static/assets}") String assetDir) {
-        this.uploadDirectory = Paths.get(uploadDir).toAbsolutePath().normalize();
+    public WebConfig(@Value("${app.asset-dir:static/assets}") String assetDir) {
         this.assetDirectory = Paths.get(assetDir).toAbsolutePath().normalize();
     }
 
@@ -25,9 +22,11 @@ public class WebConfig implements WebMvcConfigurer {
     @Override
     public void addCorsMappings(CorsRegistry registry) {
         registry.addMapping("/api/**")
-                // VULN: [A07-Lab18] Session Fixation support - credentials are allowed so that
-                // the JSESSIONID cookie travels with cross-origin requests during development.
-                // FIX:  restrict allowedOrigins to the known frontend origin in production.
+                // FIXED: [A07-Lab18] Session Fixation - the session id is now
+                // regenerated at the moment privileges change, so a cookie planted
+                // before the login is abandoned. The CORS settings below are kept
+                // narrow for the same reason: only the development frontend origins
+                // are allowed, and credentials are only ever sent to those.
                 .allowedOriginPatterns("http://localhost:*", "http://127.0.0.1:*")
                 .allowedMethods("*")
                 .allowedHeaders("*")
@@ -35,19 +34,20 @@ public class WebConfig implements WebMvcConfigurer {
     }
 
     /**
-     * Serves the upload directory and the static asset directory.
+     * Serves the static asset directory.
      *
-     * <p>VULN: [A08-Lab22] Unrestricted File Upload - the uploads directory is mapped
-     * as a static resource handler, so any file dropped there by the upload endpoint
-     * is served back verbatim with no authentication, no content-type sniffing
-     * protection and no download disposition. A .html or .svg file becomes an
-     * active payload in the victim's browser; a .jsp file becomes server-side code
-     * on a container that interprets it.</p>
+     * <p>FIXED: [A08-Lab22] Unrestricted File Upload - the uploads directory used to
+     * be mapped as a static resource handler, so any file dropped there by the upload
+     * endpoint was served back verbatim with no authentication, no content-type
+     * sniffing protection and no download disposition. A .html or .svg file became an
+     * active payload in the victim's browser; a .jsp file became server-side code on
+     * a container that interprets it.</p>
      *
-     * <p>FIX:  store uploads outside the web root, serve them from a dedicated
+     * <p>NOW: uploads are stored outside the web root and are served by a dedicated
      * controller that sets Content-Disposition: attachment and a fixed
-     * application/octet-stream content type, and never execute anything from
-     * user input.</p>
+     * application/octet-stream content type. There is no static handler for them at
+     * all, so nothing a user uploads can ever be interpreted by the browser as
+     * markup or by the container as code.</p>
      *
      * <p>FIXED: [A02-Lab6] Sensitive File Exposure - this handler used to map
      * {@code /**} at the web root and to map {@code /.env} and {@code /.git/**}
@@ -58,11 +58,6 @@ public class WebConfig implements WebMvcConfigurer {
      */
     @Override
     public void addResourceHandlers(ResourceHandlerRegistry registry) {
-        // Lab 22 (A08) - uploaded files are served from their own directory.
-        // Unchanged by this fix.
-        registry.addResourceHandler("/uploads/**")
-                .addResourceLocations(uploadDirectory.toUri().toString());
-
         // FIXED: [A02-Lab6] Sensitive File Exposure - static assets are now served
         // from a dedicated directory that contains nothing but assets. The previous
         // "/**" handler exposed the entire web root, so /.env, /.git/config and

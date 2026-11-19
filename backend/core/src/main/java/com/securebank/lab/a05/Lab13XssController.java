@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 /**
  * <h2>Lab 13 — Stored XSS: Transaction Notes</h2>
@@ -59,14 +60,18 @@ public class Lab13XssController {
         accounts.updateBalance(from.getId(), from.getBalance());
         accounts.updateBalance(to.getId(), to.getBalance());
 
-        // VULN: [A05-Lab13] Stored XSS - the note is persisted exactly as supplied, with
-        // no escaping and no sanitisation. The frontend later renders it with
-        // dangerouslySetInnerHTML, so the payload executes in every victim's browser
-        // that loads the transfers page.
-        // FIX:  sanitise on write AND on render. The safest fix is to not use
-        //       dangerouslySetInnerHTML for user data at all - render it as text.
-        //       If HTML must be supported, sanitise with DOMPurify on the client.
-        Long id = transfers.insert(from.getId(), to.getId(), request.amount(), request.note());
+        // FIXED: [A05-Lab13] Stored XSS - the note used to be persisted exactly as
+        // supplied, with no escaping and no sanitisation, and the frontend rendered it
+        // with dangerouslySetInnerHTML, so a payload executed in every victim's
+        // browser that loaded the transfers page.
+        //
+        // NOW: the note is sanitised on write AND the frontend renders it as text
+        // rather than as markup. Sanitising on write alone would leave any note
+        // stored before the fix still dangerous, so both halves matter: the client
+        // treats the value as plain text, and the server refuses to store markup in
+        // the first place.
+        Long id = transfers.insert(from.getId(), to.getId(), request.amount(),
+                sanitise(request.note()));
 
         Transfer stored = transfers.findById(id).orElse(null);
 
@@ -85,5 +90,21 @@ public class Lab13XssController {
         List<Transfer> all = transfers.findAll();
         return ResponseEntity.ok(Map.of(
                 "transfers", all.stream().map(LabResponses::renderTransfer).toList()));
+    }
+
+    /**
+     * Strips anything that could be interpreted as markup from a note.
+     *
+     * <p>FIXED: [A05-Lab13] The note is a text field, so it should never contain
+     * HTML. The tags and the event handlers inside them are removed, and the
+     * remaining angle brackets are escaped so the value can be displayed safely
+     * even by a client that has not been updated yet.</p>
+     */
+    private static String sanitise(String note) {
+        if (note == null || note.isBlank()) {
+            return note;
+        }
+        String withoutTags = note.replaceAll("<[^>]*>", "");
+        return HtmlUtils.htmlEscape(withoutTags);
     }
 }

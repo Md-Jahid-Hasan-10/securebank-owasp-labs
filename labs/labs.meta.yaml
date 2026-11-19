@@ -531,6 +531,13 @@ labs:
       ```
 
       Never interpolate user input into SQL text.
+
+      **What was changed:** both queries now use a `PreparedStatement` with a `?`
+      placeholder, so the username and the search term are sent to the driver as
+      values and can never change the shape of the statement. The `isInjected()`
+      helper - which skipped the password check precisely when an injection had
+      manipulated the WHERE clause - has been deleted, so the bcrypt check now
+      applies to every login.
     source: core/src/main/java/com/securebank/lab/a05/Lab10SqlInjectionController.java
     anchors:
       - "String sql = \"SELECT id, username, password_hash, email, role FROM users WHERE username = '\""
@@ -573,6 +580,13 @@ labs:
       ```java
       return ResponseEntity.ok("<p>Remark: " + escapeHtml(remark) + "</p>");
       ```
+
+      **What was changed:** the remark is never evaluated. The SpEL parser and the
+      `StandardEvaluationContext` are gone, along with the `render()` helper that
+      read a spawned process's output stream, so there is no expression language in
+      scope at all. The remark is HTML-escaped with `HtmlUtils.htmlEscape` before
+      it is embedded in the response fragment, and a failure is reported with a
+      generic message instead of `e.toString()`.
     source: core/src/main/java/com/securebank/lab/a05/Lab11SstiController.java
     anchors:
       - "Expression expression = parser.parseExpression(remark);"
@@ -627,6 +641,14 @@ labs:
       LocalDate from = LocalDate.parse(fromDate, DateTimeFormatter.ISO_LOCAL_DATE);
       ProcessBuilder pb = new ProcessBuilder("date", "--from", from.toString());
       ```
+
+      **What was changed:** the `evaluate()` method and the whole SpEL evaluation
+      context are gone. A caller-supplied template is now matched against a fixed
+      set of server-side templates and anything else is rejected, and the template
+      model no longer carries the configuration object at all - so there is nothing
+      in scope to steal. The date filter parses both dates with a strict
+      `LocalDate` formatter and runs no shell, and the report service no longer
+      renders stack traces (`include-stacktrace: never`).
     source: report/src/main/java/com/securebank/lab/a05/report/ReportController.java
     anchors:
       - "public ResponseEntity<?> generate("
@@ -672,6 +694,12 @@ labs:
       ```jsx
       <div>{txn.note}</div>
       ```
+
+      **What was changed:** the frontend now renders the note as a plain text
+      child, which React escapes, so it can never be interpreted as markup. The
+      server sanitises the note on write as well - tags are stripped and the
+      remaining angle brackets are escaped - so a note stored before the frontend
+      fix was applied is harmless too.
     source: core/src/main/java/com/securebank/lab/a05/Lab13XssController.java
     anchors:
       - "public ResponseEntity<?> send("
@@ -709,6 +737,11 @@ labs:
 
       This is an **insecure design** flaw: the rule was simply never considered
       during design, so no single line of code was ever wrong.
+
+      **What was changed:** the sign rule is now enforced at the input boundary.
+      An amount of zero or less is rejected with a 400, the two accounts must
+      differ, and the sender must have enough money. A positive transfer still
+      works, so the endpoint was not simply broken.
     source: core/src/main/java/com/securebank/lab/a06/Lab14BusinessLogicController.java
     anchors:
       - "public ResponseEntity<?> transfer("
@@ -746,6 +779,14 @@ labs:
 
       Role changes should be a privileged admin operation, exposed on a separate
       endpoint that requires admin authorisation.
+
+      **What was changed:** the request record now declares only the email
+      address, so there is no field for the client to bind a role into - the
+      server, not the client, decides which fields may be written. The account to
+      update is now taken from the authenticated principal rather than from the
+      request body, which also closes the second bug where a caller could update
+      somebody else's profile. The role is read back from the stored user, and the
+      frontend no longer sends a role field at all.
     source: core/src/main/java/com/securebank/lab/a06/Lab15MassAssignmentController.java
     anchors:
       - "public ResponseEntity<?> updateProfile("
@@ -796,6 +837,12 @@ labs:
 
       Equalise the timing too, so that a missing user and a wrong password take the
       same time to answer.
+
+      **What was changed:** both failure paths now return the same
+      `Invalid credentials` body with the same status. The "user not found" path
+      still performs a bcrypt comparison - against a fixed dummy hash - so the two
+      responses take the same time and the difference cannot be measured even
+      though the messages match.
     source: core/src/main/java/com/securebank/lab/a06/Lab16EnumerationController.java
     anchors:
       - "public ResponseEntity<?> login("
@@ -839,6 +886,13 @@ labs:
 
       Combine it with per-account lockout after N failures and a CAPTCHA on
       web-facing login forms.
+
+      **What was changed:** the attempt counter is now consulted before the
+      password is even checked. After five failures the bucket is locked out for
+      sixty seconds and every further attempt is refused with a 429. The lockout
+      is keyed by username *and* client address, so one attacker cannot lock
+      every customer out, and cannot dodge the limit by rotating usernames. The
+      `attempts_so_far` field is no longer returned.
     source: core/src/main/java/com/securebank/lab/a07/Lab17BruteForceController.java
     anchors:
       - "public ResponseEntity<?> login("
@@ -884,6 +938,12 @@ labs:
       ```
 
       Spring's `request.changeSessionId()` is the equivalent.
+
+      **What was changed:** the session id is now rotated at the exact moment the
+      identity is attached to the session, using `request.changeSessionId()`. The
+      id that existed before the login is abandoned, so an attacker who planted a
+      cookie beforehand is left holding a session that is no longer
+      authenticated. The response also reports `session_id_changed_on_login`.
     source: core/src/main/java/com/securebank/lab/a07/Lab18SessionController.java
     anchors:
       - "public ResponseEntity<?> loginSession("
@@ -935,6 +995,13 @@ labs:
 
       Store it with a one-hour expiry, delete it after a single use, and do not
       return it in the response body.
+
+      **What was changed:** the token is 32 bytes of `SecureRandom` output, stored
+      against its own expiry and keyed by the token itself - so it can only be
+      redeemed by presenting exactly the value that was issued, and there is
+      nothing left to derive offline. A valid token is removed from the store the
+      moment it is redeemed, so it cannot be used twice. The reset-request endpoint
+      now returns the same neutral response whether or not the account exists.
     source: core/src/main/java/com/securebank/lab/a07/Lab19ResetController.java
     anchors:
       - "public ResponseEntity<?> resetRequest("
@@ -979,6 +1046,13 @@ labs:
       Never deserialize untrusted data into polymorphic types. Use JSON with a fixed
       schema, or validate against a schema with `jsonschema` before use. Never enable
       Jackson's `activateDefaultTyping` on an ObjectMapper that reads user input.
+
+      **What was changed:** the `ObjectMapper` no longer has polymorphic default
+      typing - the `@class` property is simply an unknown property and the
+      document is rejected. The import file is parsed into a fixed `AccountImport`
+      record, so there is no type for the document to choose. The lab's own gadget
+      class has been deleted and the `commons-collections` dependency has been
+      removed from the POM, so the gadget chain is not on the classpath either.
     source: core/src/main/java/com/securebank/lab/a08/Lab20DeserializationController.java
     anchors:
       - "public ResponseEntity<?> importAccount("
@@ -1026,6 +1100,14 @@ labs:
 
       Never pass `options={"verify_signature": false}`, and reject `alg: none`
       outright.
+
+      **What was changed:** `decode()` no longer reads the token's own header. It
+      delegates straight to the strict parser, which pins HS256, verifies the
+      signature against the environment-supplied key and enforces the expiry, so
+      there is no algorithm to confuse and an unsigned token has no signature to
+      verify. The header-parsing helpers (`decodeSegment`, `padBase64`,
+      `parseJsonObject`) have been deleted. The issued token now also carries an
+      `exp` claim, so a stolen token expires on its own.
     source: core/src/main/java/com/securebank/core/security/JwtService.java
     anchors:
       - "if (\"none\".equalsIgnoreCase(String.valueOf(alg))) {"
@@ -1072,6 +1154,18 @@ labs:
       Validate the extension and MIME type server-side, generate a UUID filename,
       store uploads outside the web root, and serve them through a handler that sets
       `Content-Disposition: attachment` and a fixed content type.
+
+      **What was changed:** the extension is checked against an allowlist
+      (`.pdf`, `.png`, `.jpg`, `.jpeg`, `.doc`, `.docx`, `.txt`), the size is
+      capped at 5 MB, and the stored name is a UUID - the client's filename never
+      reaches the filesystem, so a traversal sequence cannot escape the upload
+      directory and a second upload cannot overwrite the first. The upload
+      directory has moved out of the static tree (`data/uploads`) and is no longer
+      packaged into the artifact, the `/uploads/**` static handler has been
+      removed, and `/uploads/` is no longer on the public allowlist. Files are
+      now downloaded through an authenticated endpoint that sets
+      `Content-Disposition: attachment` and `application/octet-stream`, and the
+      absolute server path is no longer returned in the response.
     source: core/src/main/java/com/securebank/lab/a08/Lab22UploadController.java
     anchors:
       - "public ResponseEntity<?> upload("
@@ -1108,6 +1202,12 @@ labs:
       ```
 
       Add a global error handler that logs the detail and returns a generic message.
+
+      **What was changed:** the id is now parsed inside a `try` block and a
+      malformed value is rejected with a generic 400, so no exception escapes the
+      controller and there is no stack trace to leak. The leak-preview endpoint
+      also redacts the datasource URL, which names the database host, port and
+      database name.
     source: core/src/main/java/com/securebank/lab/a10/Lab23VerboseErrorController.java
     anchors:
       - "public ResponseEntity<?> accountSummary("
@@ -1144,6 +1244,14 @@ labs:
           return ResponseEntity.badRequest().body(Map.of("error", "Invalid amount"));
       }
       ```
+
+      **What was changed:** the request record now binds the amount as a
+      `BigDecimal`, so a value that is not a number is rejected by the JSON binder
+      with a generic 400 and no exception is ever caught and re-described. The
+      `StringWriter` block that echoed the message, the parameter name, the Java
+      type and the whole stack trace has been deleted. The amount is also checked
+      against the business rules - it must be positive and the two accounts must
+      differ.
     source: core/src/main/java/com/securebank/lab/a10/Lab24TypeCoercionController.java
     anchors:
       - "public ResponseEntity<?> send("
@@ -1184,6 +1292,13 @@ labs:
       ```
 
       Never fail open. Exceptions in authentication logic must always fail closed.
+
+      **What was changed:** the fallback principal is gone. The `CurrentUser` is
+      built only from a token that has been successfully verified, and a token
+      that cannot be verified - malformed, unsigned, tampered with or expired -
+      is rejected with a 401 and a generic `Invalid token` body. A token with no
+      subject is rejected as well, so no principal can be produced without a
+      verified identity behind it.
     source: core/src/main/java/com/securebank/core/security/AuthFilter.java
     anchors:
       - "Long userId = 1L;"

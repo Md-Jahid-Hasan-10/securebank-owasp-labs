@@ -4,17 +4,13 @@ import java.util.Map;
 
 import com.securebank.core.transfer.Transfer;
 import com.securebank.core.transfer.TransferRepository;
-import org.springframework.expression.Expression;
-import org.springframework.expression.ExpressionParser;
-import org.springframework.expression.spel.SpelParseException;
-import org.springframework.expression.spel.standard.SpelExpressionParser;
-import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.util.HtmlUtils;
 
 /**
  * <h2>Lab 11 — SSTI: SpEL Remote Code Execution via Transaction Remark</h2>
@@ -32,7 +28,6 @@ import org.springframework.web.bind.annotation.RestController;
 public class Lab11SstiController {
 
     private final TransferRepository transfers;
-    private final ExpressionParser parser = new SpelExpressionParser();
 
     public Lab11SstiController(TransferRepository transfers) {
         this.transfers = transfers;
@@ -55,62 +50,27 @@ public class Lab11SstiController {
 
         transfers.updateRemark(id, remark);
 
-        String rendered;
-        try {
-            // VULN: [A05-Lab11] Server-Side Template Injection - the remark is parsed and
-            // evaluated as a SpEL expression instead of being treated as plain text.
-            // StandardEvaluationContext is used, which allows type references via T(...),
-            // so the payload
-            //   T(java.lang.Runtime).getRuntime().exec(new java.lang.String[]{"id"})
-            // reaches Runtime.exec and executes an operating system command.
-            // FIX:  never evaluate user input as an expression. If a template is needed,
-            //       pass the user value as a *variable* into a fixed template, and use
-            //       SimpleEvaluationContext (or no context at all) so that type
-            //       references and method invocation are impossible.
-            StandardEvaluationContext context = new StandardEvaluationContext();
-            Expression expression = parser.parseExpression(remark);
-            Object value = expression.getValue(context);
-            rendered = render(value);
-        } catch (SpelParseException e) {
-            rendered = remark;
-        } catch (Exception e) {
-            // VULN: [A05-Lab11] the exception detail is returned to the client, which
-            // leaks the evaluation context and the available types.
-            // FIX:  return a generic error and log the detail server-side.
-            rendered = remark;
-            return ResponseEntity.status(500).body(Map.of(
-                    "error", "Could not render remark",
-                    "detail", e.toString()));
-        }
+        // FIXED: [A05-Lab11] Server-Side Template Injection - the remark used to be
+        // parsed and evaluated as a SpEL expression instead of being treated as plain
+        // text. StandardEvaluationContext was used, which allows type references via
+        // T(...), so the payload
+        //   T(java.lang.Runtime).getRuntime().exec(new java.lang.String[]{"id"})
+        // reached Runtime.exec and executed an operating system command.
+        //
+        // NOW: the remark is never evaluated. It is a string that gets stored and
+        // displayed, and the only transformation applied to it is HTML escaping, so
+        // it cannot reach a parser, a method call or an operating system command.
+        String rendered = HtmlUtils.htmlEscape(remark);
 
-        // VULN: [A05-Lab11] the rendered result is also written back into an HTML
-        // fragment that the frontend injects as raw markup, so the expression result
-        // can carry a script payload straight into the victim's browser.
-        // FIX:  HTML-escape the value before embedding it, and never use
-        //       dangerouslySetInnerHTML for user-controlled content.
+        // FIXED: [A05-Lab11] the rendered result used to be written back into an HTML
+        // fragment that the frontend injected as raw markup, so the expression result
+        // could carry a script payload straight into the victim's browser.
+        //
+        // NOW: the value is HTML-escaped before it is embedded, so a remark containing
+        // markup is displayed as the text it is rather than executed as HTML.
         return ResponseEntity.ok(Map.of(
                 "transfer_id", id,
                 "remark", remark,
                 "rendered", "<p>Remark: " + rendered + "</p>"));
-    }
-
-    /**
-     * Converts the evaluated value to text.
-     *
-     * <p>When the expression started a process (the RCE payload), the process's
-     * output stream is read so that the command's result is visible in the response.</p>
-     */
-    private String render(Object value) {
-        if (value instanceof Process process) {
-            try {
-                String output = new String(process.getInputStream().readAllBytes(),
-                        java.nio.charset.StandardCharsets.UTF_8);
-                process.waitFor();
-                return output.trim();
-            } catch (Exception e) {
-                return String.valueOf(value);
-            }
-        }
-        return String.valueOf(value);
     }
 }

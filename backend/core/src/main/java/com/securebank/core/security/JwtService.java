@@ -1,9 +1,8 @@
 package com.securebank.core.security;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.HashMap;
-import java.util.Map;
+import java.time.Instant;
+import java.util.Date;
 
 import javax.crypto.SecretKey;
 
@@ -72,10 +71,16 @@ public class JwtService {
      * Signs a token for the given user.
      */
     public String issue(Long userId, String username, String role) {
+        // FIXED: [A08-Lab21] The token now carries an expiry. Without it a stolen token
+        // stayed valid forever, so there was no window in which a leak could be closed
+        // by waiting the credential out.
+        Instant expiry = Instant.now().plusSeconds(expirationSeconds);
         return Jwts.builder()
                 .claim("user_id", userId)
                 .claim("username", username)
                 .claim("role", role)
+                .issuedAt(Date.from(Instant.now()))
+                .expiration(Date.from(expiry))
                 .signWith(signingKey(), Jwts.SIG.HS256)
                 .compact();
     }
@@ -111,34 +116,19 @@ public class JwtService {
     /**
      * Validates a token the way the application actually does at runtime.
      *
-     * <p>VULN: [A08-Lab21] JWT Algorithm Confusion - a token whose header declares
-     * {@code "alg": "none"} is accepted without any signature verification at all. The
-     * header is attacker-controlled, so the attacker simply claims to be admin and
-     * removes the signature.</p>
+     * <p>FIXED: [A08-Lab21] JWT Algorithm Confusion - the old code read the token's
+     * own header, saw {@code "alg": "none"} and then trusted the payload without any
+     * signature check at all. The header is entirely attacker-controlled, so removing
+     * the signature was enough to become admin.</p>
      *
-     * <p>FIX: always verify the signature with a pinned algorithm list, e.g.
-     * {@code Jwts.parser().verifyWith(key).build().parseSignedClaims(token)}, and
-     * explicitly reject tokens whose header algorithm is not in the allowed set.</p>
+     * <p>NOW: the token is always parsed by the strict parser, which pins HS256,
+     * verifies the signature against the environment-supplied key and enforces the
+     * expiry. The header is never branched on, so there is no algorithm to confuse.
+     * A token whose header asks for anything other than the pinned algorithm fails
+     * the signature check, and an unsigned token fails it too, because there is no
+     * signature to verify.</p>
      */
     public TokenPayload decode(String token) {
-        try {
-            String header = decodeSegment(token, 0);
-            Map<String, Object> headerJson = parseJsonObject(header);
-
-            Object alg = headerJson.get("alg");
-            if ("none".equalsIgnoreCase(String.valueOf(alg))) {
-                // VULN: [A08-Lab21] JWT Algorithm Confusion - unsigned token accepted as valid.
-                // The payload is trusted verbatim, so the attacker becomes whoever they claim.
-                // FIX:  reject "none" outright, or better, never branch on the token's own header.
-                Map<String, Object> claims = parseJsonObject(decodeSegment(token, 1));
-                return new TokenPayload(
-                        asLong(claims.get("user_id")),
-                        asString(claims.get("username")),
-                        asString(claims.get("role")));
-            }
-        } catch (RuntimeException ignored) {
-            // Fall through to the strict path - a malformed token is not a "none" token.
-        }
         Claims claims = decodeStrict(token);
         return new TokenPayload(
                 asLong(claims.get("user_id")),
@@ -158,33 +148,5 @@ public class JwtService {
 
     private static String asString(Object value) {
         return value == null ? null : String.valueOf(value);
-    }
-
-    private String decodeSegment(String token, int index) {
-        String[] parts = token.split("\\.");
-        if (parts.length < 2) {
-            throw new IllegalArgumentException("malformed token");
-        }
-        Base64.Decoder decoder = Base64.getUrlDecoder();
-        byte[] decoded = decoder.decode(padBase64(parts[index]));
-        return new String(decoded, StandardCharsets.UTF_8);
-    }
-
-    private String padBase64(String value) {
-        int padding = value.length() % 4;
-        if (padding == 0) {
-            return value;
-        }
-        return value + "=".repeat(4 - padding);
-    }
-
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> parseJsonObject(String json) {
-        try {
-            return new com.fasterxml.jackson.databind.ObjectMapper()
-                    .readValue(json, HashMap.class);
-        } catch (Exception e) {
-            throw new IllegalArgumentException("malformed token segment", e);
-        }
     }
 }

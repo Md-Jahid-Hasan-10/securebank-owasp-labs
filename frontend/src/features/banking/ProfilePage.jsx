@@ -3,18 +3,14 @@ import { api } from '../../api/client'
 
 export default function ProfilePage() {
   const [profile, setProfile] = useState(null)
-  const [form, setForm] = useState({ username: '', email: '', role: '' })
+  const [form, setForm] = useState({ email: '' })
   const [status, setStatus] = useState(null)
 
   useEffect(() => {
     api('/api/a06/profile').then((res) => {
       if (res.ok) {
         setProfile(res.data)
-        setForm({
-          username: res.data.username ?? '',
-          email: res.data.email ?? '',
-          role: res.data.role ?? '',
-        })
+        setForm({ email: res.data.email ?? '' })
       }
     })
   }, [])
@@ -23,13 +19,15 @@ export default function ProfilePage() {
     event.preventDefault()
     setStatus(null)
 
-    // VULN: [A06-Lab15] Mass Assignment - the form sends the role field straight back
-    // to the server, and the server binds it. A trainee can edit the role field in
-    // devtools to "admin" and elevate their own account. The Fix tab shows the
-    // correct request shape.
+    // FIXED: [A06-Lab15] Mass Assignment - the form used to send the role field
+    // straight back to the server, and the server bound it. A trainee could edit the
+    // role field in devtools to "admin" and elevate their own account.
+    //
+    // The client now sends only the email address. The server decides which fields a
+    // client may change, so the role is not part of the request at all.
     const res = await api('/api/a06/profile', {
       method: 'PATCH',
-      body: form,
+      body: { email: form.email },
     })
 
     if (res.ok) {
@@ -52,10 +50,7 @@ export default function ProfilePage() {
       <form className="card" onSubmit={save}>
         <label className="field">
           <span>Username</span>
-          <input
-            value={form.username}
-            onChange={(e) => setForm({ ...form, username: e.target.value })}
-          />
+          <input value={profile.username} readOnly disabled />
         </label>
 
         <label className="field">
@@ -67,12 +62,11 @@ export default function ProfilePage() {
           />
         </label>
 
+        {/* FIXED: [A06-Lab15] the role is shown read-only. It is not editable by the
+            customer, and it is not sent to the server on save. */}
         <label className="field">
           <span>Role</span>
-          <input
-            value={form.role}
-            onChange={(e) => setForm({ ...form, role: e.target.value })}
-          />
+          <input value={profile.role} readOnly disabled />
         </label>
 
         {status && (

@@ -3,7 +3,7 @@ package com.securebank.lab.a08;
 import java.util.Map;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.securebank.lab.a08.gadget.AccountImportJob;
+import com.fasterxml.jackson.databind.PropertyNamingStrategies;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -31,37 +31,56 @@ public class Lab20DeserializationController {
     private static final Logger log = LoggerFactory.getLogger(Lab20DeserializationController.class);
 
     /**
-     * An ObjectMapper configured with polymorphic default typing.
+     * FIXED: [A08-Lab20] A plain ObjectMapper with no polymorphic default typing.
      *
-     * <p>VULN: [A08-Lab20] Insecure Deserialization - default typing means that the
-     * <em>type</em> to instantiate is read from the document itself, so the attacker
-     * chooses the class. Combined with a gadget class whose creator has a side
-     * effect (see {@link AccountImportJob}), a JSON document can run
-     * Runtime.exec() during deserialisation.</p>
+     * <p>The old mapper had default typing enabled with
+     * {@code LaissezFaireSubTypeValidator}, which means the <em>type</em> to
+     * instantiate was read from the document itself, so the attacker chose the
+     * class. Combined with a gadget class whose creator had a side effect, a JSON
+     * document could run Runtime.exec() during deserialisation.</p>
      *
-     * <p>FIX: never enable default typing on an ObjectMapper that reads untrusted
-     * input. Use a concrete target type, or a JsonTypeInfo with a closed allowlist of
-     * subtypes.</p>
+     * <p>NOW: the mapper has no type information in it at all. The target type is
+     * fixed by the call site, so a document that names a class is simply rejected as
+     * an unknown property.</p>
      */
-    private final ObjectMapper vulnerableMapper = new ObjectMapper()
-            .activateDefaultTyping(
-                    com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator.instance,
-                    ObjectMapper.DefaultTyping.EVERYTHING,
-                    com.fasterxml.jackson.annotation.JsonTypeInfo.As.PROPERTY);
+    private final ObjectMapper mapper = new ObjectMapper();
+
+    /**
+     * The concrete shape an account import document must have.
+     *
+     * <p>FIXED: [A08-Lab20] the import file is parsed into this fixed type. There is
+     * no {@code @class} property to honour, and nothing in the document can choose
+     * what gets instantiated.</p>
+     */
+    public record AccountImport(String username, String accountNumber, String currency) {
+    }
+
+    /**
+     * FIXED: [A08-Lab20] The mapper the import endpoint uses.
+     *
+     * <p>The application sets {@code spring.jackson.property-naming-strategy=SNAKE_CASE}
+     * for the HTTP layer, but this mapper is built by hand, so it does not pick that
+     * up. The import document uses {@code account_number}, so the mapper is told to
+     * use the same snake-case naming strategy the rest of the API uses. Without this
+     * the well-formed document would be rejected as an unknown property.</p>
+     */
+    private final ObjectMapper importMapper = new ObjectMapper()
+            .setPropertyNamingStrategy(PropertyNamingStrategies.SNAKE_CASE);
 
     @PostMapping("/import-account")
     public ResponseEntity<?> importAccount(@RequestParam("data") MultipartFile file) {
         try {
             byte[] content = file.getBytes();
 
-            // VULN: [A08-Lab20] the uploaded file is deserialised with an ObjectMapper
-            // that has polymorphic default typing enabled. The document's own
-            // "@class" property selects the class to instantiate, so uploading a
-            // gadget chain executes arbitrary code on the server during this call.
-            // FIX:  parse into a fixed, known type with a plain ObjectMapper:
-            //       AccountImport import = new ObjectMapper()
-            //               .readValue(content, AccountImport.class);
-            Object parsed = vulnerableMapper.readValue(content, Object.class);
+            // FIXED: [A08-Lab20] the uploaded file used to be deserialised with an
+            // ObjectMapper that had polymorphic default typing enabled. The document's
+            // own "@class" property selected the class to instantiate, so uploading a
+            // gadget chain executed arbitrary code on the server during this call.
+            //
+            // NOW: the document is parsed into a fixed, known type. A document that
+            // carries a "@class" property fails to bind - the property is unknown -
+            // and no code runs while it is being read.
+            AccountImport parsed = importMapper.readValue(content, AccountImport.class);
 
             log.info("account import processed, {} bytes", content.length);
 
@@ -69,39 +88,32 @@ public class Lab20DeserializationController {
             body.put("imported", true);
             body.put("filename", file.getOriginalFilename());
             body.put("bytes", content.length);
-            body.put("deserialized_type", parsed == null ? null : parsed.getClass().getName());
-
-            // VULN: [A08-Lab20] the response echoes the gadget's captured output
-            // straight back, which is how the attacker confirms code execution.
-            if (parsed instanceof AccountImportJob job) {
-                body.put("command", job.getCommand());
-                body.put("command_output", job.getOutput());
-            }
+            body.put("deserialized_type", AccountImport.class.getName());
+            body.put("username", parsed == null ? null : parsed.username());
+            body.put("account_number", parsed == null ? null : parsed.accountNumber());
+            body.put("currency", parsed == null ? null : parsed.currency());
 
             return ResponseEntity.ok(body);
         } catch (Exception e) {
-            // VULN: [A08-Lab20] the exception detail is returned to the client, which
-            // helps the attacker tune their payload.
-            // FIX:  log the detail server-side and return a generic error.
+            // FIXED: [A08-Lab20] the exception detail used to be returned to the
+            // client, which helped the attacker tune their payload. The detail is
+            // logged server-side and the response is generic.
             log.warn("account import failed", e);
             return ResponseEntity.status(400).body(Map.of(
-                    "error", "Could not import account file",
-                    "detail", e.getMessage()));
+                    "error", "Could not import account file"));
         }
     }
 
     /**
-     * Shows what the vulnerable ObjectMapper accepts, for reference.
+     * Shows how the import endpoint parses its input.
      */
     @PostMapping("/import-account/describe")
     public ResponseEntity<?> describe() {
         return ResponseEntity.ok(Map.of(
-                "default_typing", vulnerableMapper.getPolymorphicTypeValidator() != null
-                        ? "enabled (LaissezFaireSubTypeValidator)" : "disabled",
-                "type_property", "@class",
-                "note", "Any class on the classpath can be named in the document's @class property.",
-                "known_gadget", "com.securebank.lab.a08.gadget.AccountImportJob",
-                "historical_gadget", "org.apache.commons.collections.functors.InvokerTransformer",
-                "historical_note", "Jackson 2.17 hard-blocks that class, so this lab ships its own gadget."));
+                "default_typing", "disabled",
+                "target_type", AccountImport.class.getName(),
+                "type_property", "none - the document cannot name a class",
+                "note", "The import file is parsed into a fixed type, so a document that "
+                        + "names a class is rejected rather than instantiated."));
     }
 }

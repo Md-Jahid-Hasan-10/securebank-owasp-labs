@@ -29,10 +29,14 @@ public class Lab15MassAssignmentController {
     }
 
     /**
-     * The update payload. Note that it declares {@code role}, which is a field the
-     * client should never be able to set.
+     * The update payload.
+     *
+     * <p>FIXED: [A06-Lab15] This record used to declare {@code role}, a field the
+     * client should never be able to set. It no longer does: the server decides which
+     * fields a client may change, so a field that is not on the record simply cannot
+     * be bound from the request body.</p>
      */
-    public record ProfileUpdateRequest(String username, String email, String role) {
+    public record ProfileUpdateRequest(String email) {
     }
 
     /**
@@ -40,26 +44,36 @@ public class Lab15MassAssignmentController {
      */
     @PatchMapping("/profile")
     public ResponseEntity<?> updateProfile(@RequestBody ProfileUpdateRequest request) {
-        User user = users.findByUsername(request.username()).orElse(null);
+        // FIXED: [A06-Lab15] the account to update is now taken from the
+        // authenticated principal, not from the request body. The old code looked
+        // the user up by a client-supplied username, so a caller could update
+        // somebody else's profile - a second bug hidden behind the first.
+        com.securebank.core.security.CurrentUser caller =
+                com.securebank.core.security.CurrentUserHolder.get();
+
+        if (caller == null || caller.getId() == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Authentication required"));
+        }
+
+        User user = users.findById(caller.getId()).orElse(null);
         if (user == null) {
             return ResponseEntity.status(404).body(Map.of("error", "User not found"));
         }
 
-        // VULN: [A06-Lab15] Mass Assignment / Over-Exposed DTO - the request record
-        // declares `role` as a bindable field and every field it declares is written
-        // straight to the database row. A client that simply adds "role": "admin" to
-        // the JSON body therefore elevates its own privileges, because the server
-        // never decides which fields a client is allowed to change - the client does.
-        // FIX:  do not bind privileged fields from user input. Either omit `role` from
-        //       the request type entirely:
-        //           public record ProfileUpdateRequest(String username, String email) { }
-        //       or, in a framework that supports it, mark it read-only:
-        //           @JsonProperty(access = Access.READ_ONLY)
-        //       Role changes belong on a separate endpoint that requires admin rights.
+        // FIXED: [A06-Lab15] Mass Assignment / Over-Exposed DTO - the request record
+        // used to declare `role` as a bindable field and every field it declared was
+        // written straight to the database row. A client that simply added
+        // "role": "admin" to the JSON body therefore elevated its own privileges,
+        // because the server never decided which fields a client was allowed to
+        // change - the client did.
+        //
+        // NOW: the record only carries `email`. The role is taken from the stored
+        // user, so it cannot be changed through this endpoint at all. Role changes
+        // belong on a separate endpoint that requires admin rights.
         users.updateProfile(user.getId(),
-                request.username(),
-                request.email(),
-                request.role() == null ? user.getRole() : request.role());
+                user.getUsername(),
+                request.email() == null ? user.getEmail() : request.email(),
+                user.getRole());
 
         User updated = users.findById(user.getId()).orElse(null);
 

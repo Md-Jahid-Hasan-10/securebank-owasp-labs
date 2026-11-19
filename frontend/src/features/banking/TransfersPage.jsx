@@ -116,13 +116,13 @@ export default function TransfersPage() {
               <td>{txn.from_account_id}</td>
               <td>{txn.to_account_id}</td>
               <td className="num">£{Number(txn.amount).toFixed(2)}</td>
-              {/* VULN: [A05-Lab13] Stored XSS - the note is rendered as raw HTML.
-                  A note of <img src=x onerror=alert(document.cookie)> executes for every
-                  user who loads this page. The Fix tab shows the sanitised version. */}
-              <td
-                className="note-cell"
-                dangerouslySetInnerHTML={{ __html: txn.note ?? '' }}
-              />
+              {/* FIXED: [A05-Lab13] Stored XSS - the note used to be rendered as raw
+                  HTML with dangerouslySetInnerHTML, so a note of
+                  <img src=x onerror=alert(document.cookie)> executed for every user
+                  who loaded this page. React escapes text children, so rendering the
+                  note as a plain string displays it as the text it is and never as
+                  markup. */}
+              <td className="note-cell">{txn.note ?? ''}</td>
             </tr>
           ))}
         </tbody>
