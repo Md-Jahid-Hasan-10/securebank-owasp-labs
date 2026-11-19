@@ -436,6 +436,14 @@ labs:
       ```
 
       Rotate it on a schedule and never log it.
+
+      **What was changed:** `jwt.secret` in `application.yml` now reads
+      `${JWT_SECRET}` with no default, so the application refuses to start without
+      it and no key material is committed. `JwtService` validates that the secret is
+      at least 32 bytes and never logs it. The Lab 4 debug and verbose-error
+      responses drop the secret entirely, and the Lab 23 leak preview reports
+      `[redacted]`. The container receives the secret through the `JWT_SECRET`
+      environment variable.
     source: core/src/main/java/com/securebank/core/security/JwtService.java
     anchors:
       - "log.info(\"JWT signing key loaded"

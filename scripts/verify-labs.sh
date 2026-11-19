@@ -347,7 +347,61 @@ print(f"{header}.{payload}.{sig}")
 PY
 )"
   OUT="$(curl -s -H "Authorization: Bearer $FORGED" "$API/api/a10/transfers/history")"
-  check "token signed with 'secret' is accepted as admin" "$OUT" '"requested_role":"admin"'
+  # NOTE: an invalid token is treated as admin by the Lab 25 fail-open filter, so
+  # the HTTP response cannot tell a forged token from a garbage one while that
+  # lab is still vulnerable. The signature is checked directly instead - that is
+  # what this lab is actually about.
+  LIVE="$(login alice password123)"
+  SIG_OK="$(python3 - "$LIVE" <<'PY'
+import base64, hashlib, hmac, sys
+
+token = sys.argv[1]
+if not token:
+    print("no-token")
+    raise SystemExit
+
+header, payload, sig = token.split(".")
+
+
+def b64d(value):
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+message = f"{header}.{payload}".encode()
+expected = hmac.new(b"secret", message, hashlib.sha256).digest()
+print("signed-with-secret" if b64d(sig) == expected else "not-signed-with-secret")
+PY
+)"
+  if [[ "$SIG_OK" == "not-signed-with-secret" ]]; then
+    green "a live token is not signed with 'secret'"
+    PASS=$((PASS + 1))
+  else
+    red "a live token is still signed with 'secret'"
+    FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
+  fi
+  # The signing key must not be published anywhere.
+  OUT="$(curl -s "$API/api/a02/debug")"
+  refute "the debug endpoint does not disclose the secret" "$OUT" '"jwt.secret":"secret"'
+  OUT="$(curl -s "$API/api/a02/debug/boom")"
+  refute "the error response does not disclose the secret" "$OUT" '"jwt.secret":"secret"'
+  OUT="$(curl -s "$API/api/a10/transfers/leak-preview")"
+  refute "the leak preview does not disclose the secret" "$OUT" '"jwt.secret":"secret"'
+  # The startup log must not contain the key either.
+  OUT="$(docker compose logs backend 2>/dev/null | grep -c 'SECRET_KEY=.secret' || true)"
+  refute "the startup log does not print the key" "$OUT" "1"
+  # The committed configuration must not contain the key either.
+  OUT="$(grep -c 'secret: "secret"' backend/core/src/main/resources/application.yml || true)"
+  refute "the committed configuration has no literal secret" "$OUT" "1"
+  # A legitimate login still works, so the fix did not simply break signing.
+  if [[ -n "$LIVE" ]]; then
+    green "alice can still sign in with a valid token"
+    PASS=$((PASS + 1))
+  else
+    red "alice can no longer sign in"
+    FAIL=$((FAIL + 1))
+    FAILED_LABS+=("$CURRENT_LAB")
+  fi
 fi
 
 # --- Lab 9: PII in cleartext ------------------------------------------------

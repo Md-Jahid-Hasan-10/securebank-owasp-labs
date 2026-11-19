@@ -42,12 +42,14 @@ spring:
     default-typing: disabled
     property-naming-strategy: SNAKE_CASE
 
-# VULN: [A04-Lab8] The JWT signing secret is hardcoded in the shipped configuration file
-# and is also printed to the application log at startup. Anyone with repo access,
-# log access, or the exposed .env file can forge tokens for any user.
-# FIX:  load a >= 256-bit random secret from the environment; never commit it.
+# FIXED: [A04-Lab8] The JWT signing secret is no longer committed. It is read from the
+# JWT_SECRET environment variable and there is no default: the application refuses to
+# start when the variable is missing or shorter than 32 bytes.
+#
+# Generate a value with:
+#   python3 -c "import secrets; print(secrets.token_hex(32))"
 jwt:
-  secret: "secret"
+  secret: ${JWT_SECRET}
   expiration-seconds: 3600
 
 # FIXED: [A02-Lab6] The static resource directory is no longer the web root. Assets

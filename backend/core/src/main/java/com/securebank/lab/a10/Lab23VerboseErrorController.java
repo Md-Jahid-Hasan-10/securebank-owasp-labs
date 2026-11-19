@@ -122,7 +122,8 @@ public class Lab23VerboseErrorController {
     public ResponseEntity<?> leakPreview() {
         Map<String, Object> leak = new LinkedHashMap<>();
         leak.put("server.error.include-stacktrace", environment.getProperty("server.error.include-stacktrace"));
-        leak.put("jwt.secret", environment.getProperty("jwt.secret"));
+        // FIXED: [A10-Lab23] The signing secret is never echoed in a response body.
+        leak.put("jwt.secret", environment.getProperty("jwt.secret") == null ? null : "[redacted]");
         leak.put("spring.datasource.url", environment.getProperty("spring.datasource.url"));
         leak.put("tip", "Request /api/a10/transfers/account-summary?id=abc for the real thing.");
         return ResponseEntity.ok(leak);

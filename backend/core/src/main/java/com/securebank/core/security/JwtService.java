@@ -29,16 +29,37 @@ public class JwtService {
 
     public JwtService(@Value("${jwt.secret}") String secret,
                       @Value("${jwt.expiration-seconds:3600}") long expirationSeconds) {
-        this.secret = secret;
+        // FIXED: [A04-Lab8] The secret is now required to come from the environment and to be
+        // at least 32 bytes of key material. There is no committed fallback value: if the
+        // variable is missing the application refuses to start rather than silently signing
+        // tokens with a well-known key.
+        this.secret = requireUsableSecret(secret);
         this.expirationSeconds = expirationSeconds;
 
-        // VULN: [A04-Lab8] Hardcoded Weak JWT Secret - the signing key is a trivially guessable
-        // literal from the shipped application.yml, and it is echoed to the application log
-        // at startup. Anyone with repo access, log access, or the exposed .env file (Lab 6)
-        // can mint a token for any user, including admin.
-        // FIX:  load a >= 256-bit random secret from an environment variable or a secret
-        //       manager at startup, never from a committed file, and never log it.
-        log.info("JWT signing key loaded (SECRET_KEY={})", secret);
+        // FIXED: [A04-Lab8] The secret is never written to the log. The startup line now
+        // records only that a key was loaded and where it came from.
+        log.info("JWT signing key loaded from environment (SECRET_KEY=[redacted])");
+    }
+
+    /**
+     * Validates the configured secret and returns it unchanged.
+     *
+     * <p>FIXED: [A04-Lab8] HMAC-SHA256 needs at least 256 bits of key material. A short
+     * secret is rejected outright, and a missing one fails startup, so the application can
+     * never end up signing tokens with a guessable constant.</p>
+     */
+    private static String requireUsableSecret(String candidate) {
+        if (candidate == null || candidate.isBlank()) {
+            throw new IllegalStateException(
+                    "jwt.secret is not configured. Set the JWT_SECRET environment variable "
+                            + "to a random value of at least 32 bytes.");
+        }
+        if (candidate.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException(
+                    "jwt.secret must be at least 32 bytes for HS256. Generate one with: "
+                            + "python3 -c \"import secrets; print(secrets.token_hex(32))\"");
+        }
+        return candidate;
     }
 
     /**
@@ -75,32 +96,16 @@ public class JwtService {
     /**
      * Builds the HMAC signing key.
      *
-     * <p>VULN: [A04-Lab8] the key material comes from a literal in the committed
-     * application.yml, so it is known to anyone with repository access - and it is
-     * echoed to the log at startup, so it is known to anyone with log access too.
-     * The value is long enough to satisfy the JWA key-length rules (so the token is
-     * a well-formed HS256 token) but it is a well-known constant, not a secret.</p>
-     *
-     * <p>FIX: generate a random secret per deployment - for example
-     * {@code secrets.token_hex(32)} - and read it from the environment or a secret
-     * manager. Never commit it, and never log it.</p>
+     * <p>FIXED: [A04-Lab8] The key material comes from the environment, where it was
+     * generated randomly for this deployment. It is never committed, never logged, and
+     * never returned in an HTTP response. The length is validated once in the
+     * constructor, so no padding is needed here - padding a short value would only
+     * hide the fact that the key was too weak.</p>
      */
-    // VULN: [A04-Lab8] Hardcoded Weak JWT Secret - a committed, well-known signing key
-    // FIX:  load a >= 256-bit random secret from the environment; never commit it
+    // FIXED: [A04-Lab8] The signing key is a random >= 256-bit value supplied by the
+    // environment; it is never committed to the repository and never logged.
     private SecretKey signingKey() {
-        // The literal is padded to the 32-byte minimum that HS256 requires. The
-        // padding is not secret - the whole value is published in application.yml,
-        // in .env (Lab 6) and in the startup log.
-        byte[] material = secret.getBytes(StandardCharsets.UTF_8);
-        if (material.length < 32) {
-            byte[] padded = new byte[32];
-            System.arraycopy(material, 0, padded, 0, material.length);
-            for (int i = material.length; i < padded.length; i++) {
-                padded[i] = '0';
-            }
-            material = padded;
-        }
-        return Keys.hmacShaKeyFor(material);
+        return Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));
     }
 
     /**

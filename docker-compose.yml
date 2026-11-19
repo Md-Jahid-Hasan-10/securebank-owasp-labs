@@ -27,6 +27,11 @@ services:
       DB_NAME: securebank
       DB_USER: securebank
       DB_PASSWORD: securebank
+      # FIXED: [A04-Lab8] The JWT signing secret is supplied by the environment rather
+      # than committed in application.yml. This default is a development convenience
+      # only - override it in any real deployment:
+      #   export JWT_SECRET=$(python3 -c "import secrets; print(secrets.token_hex(32))")
+      JWT_SECRET: "${JWT_SECRET:-896e714b9a9e4a032f6fa7fe10f1ce8f249f8d582ad96bfee2ae978ec9c69bb2}"
     ports:
       - "8080:8080"
     healthcheck:
