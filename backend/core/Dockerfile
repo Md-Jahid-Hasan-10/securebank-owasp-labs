@@ -54,18 +54,22 @@ RUN apt-get update \
 COPY --from=build /build/backend/core/target/*.jar app.jar
 COPY backend/core/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-# VULN: [A02-Lab6] Sensitive File Exposure - the fake .git directory is copied into
-# the image's web root, so that /.git/config is downloadable over HTTP. This mirrors
-# what happens when an application is deployed straight out of a repository checkout.
-# FIX:  never ship a .git directory (or a .env file) inside the document root.
+# FIXED: [A02-Lab6] Sensitive File Exposure - the fake .git directory is no longer
+# copied into the image's web root, so /.git/config is not downloadable over HTTP.
+# Shipping VCS metadata inside the document root is what made this possible in the
+# first place: the image used to be built straight out of a repository checkout.
 #
-# The fixture is stored in the repository as lab-fixtures/git-config rather than as
-# static/.git/config, because git refuses to track any path containing a ".git"
-# component - not even with "git add -f". The Dockerfile renames it into place, so
-# the served path is still /.git/config.
-COPY backend/core/src/main/resources/lab-fixtures/git-config /app/static/.git/config
+# The fixture is still tracked in the repository as lab-fixtures/git-config rather
+# than as static/.git/config, because git refuses to track any path containing a
+# ".git" component - not even with "git add -f". It is simply not copied into the
+# image any more.
+#
+# The image also no longer contains a .env file in a served directory. The
+# environment file is a training fixture for the vulnerable branch; see
+# scripts/apply-fixed-lab6.py for the details.
 RUN chmod +x /app/docker-entrypoint.sh \
-    && mkdir -p /app/static/uploads
+    && mkdir -p /app/static/uploads \
+    && mkdir -p /app/static/assets
 
 EXPOSE 8080
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

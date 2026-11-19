@@ -21,35 +21,23 @@ public class Lab6StaticExposureController {
 
     /**
      * Lists the files that the web root currently exposes.
+     *
+     * <p>FIXED: [A02-Lab6] Sensitive File Exposure - the endpoint used to advertise
+     * the three files that the web root exposed: the environment file, the
+     * repository's git config and the database backup. It now reports an empty
+     * list, because none of them is served any more.</p>
      */
     @GetMapping("/exposed-files")
     public ResponseEntity<?> exposedFiles() {
-        // VULN: [A02-Lab6] Sensitive File Exposure - the Spring Boot static resource
-        // directory IS the web root, and it contains .env, .git/config and a full
-        // PostgreSQL backup. Every one of them is served to any anonymous client.
-        // The AWS-style keys in .env would give cloud access, the backup contains every
-        // account, balance and password hash, and .git/config reveals the internal
-        // repository layout.
-        // FIX:  never place secrets in a directory served by the web server. Keep
-        //       static assets in a dedicated folder outside the web root, add .env and
-        //       .git to .gitignore, and add a build-time check that fails the build if a
-        //       secret file is found in the static tree.
-        List<Map<String, Object>> files = List.of(
-                Map.of(
-                        "url", "/.env",
-                        "description", "Environment file — fake AWS/Stripe credentials",
-                        "contains", "AWS keys, Stripe secret, database password, JWT secret"),
-                Map.of(
-                        "url", "/.git/config",
-                        "description", "Git configuration — reveals the internal repository",
-                        "contains", "remote origin URL, branch configuration"),
-                Map.of(
-                        "url", "/backup.zip",
-                        "description", "PostgreSQL database backup — the entire dataset",
-                        "contains", "users, accounts, transfers, MD5 password hashes"));
+        // FIXED: [A02-Lab6] Sensitive File Exposure - the web root is no longer
+        // served, the dot-prefixed resource handlers have been removed and the
+        // database backup is no longer written into a served directory. There is
+        // nothing left for an anonymous client to download.
+        List<Map<String, Object>> files = List.of();
 
         return ResponseEntity.ok(Map.of(
-                "web_root", "src/main/resources/static/",
+                "web_root", "not exposed",
                 "files", files));
     }
+
 }

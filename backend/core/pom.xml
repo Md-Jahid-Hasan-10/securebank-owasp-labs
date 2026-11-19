@@ -87,19 +87,36 @@
   <build>
     <resources>
       <!--
-        VULN: [A02-Lab6] Sensitive File Exposure - the static resource directory is
-        packaged into the artifact as-is, including the .env file, so that it is
+        FIXED: [A02-Lab6] Sensitive File Exposure - the static resource directory is
+        no longer packaged into the artifact as-is. It used to include the .env
+        file, so the environment file shipped inside the deployable jar and was
         served over HTTP by the static resource handler.
-        FIX:  never package secrets or VCS metadata into a deployable artifact.
 
-        The fake .git directory is NOT packaged here - Maven's resource scanner skips
-        dot-directories. The Dockerfile copies it into the image's web root instead,
-        which is exactly how a real repository checkout ends up serving its own
-        .git directory over HTTP.
+        The static tree now only contains the uploads directory (Lab 22) and the
+        assets directory. Secrets and VCS metadata are never packaged into an
+        artifact.
       -->
       <resource>
         <directory>src/main/resources</directory>
         <filtering>false</filtering>
+        <excludes>
+          <exclude>static/**</exclude>
+          <exclude>lab-fixtures/**</exclude>
+        </excludes>
+      </resource>
+      <!--
+        The static tree is packaged separately so that the asset and upload
+        directories are still present in the artifact, but without any secret
+        file that may have been dropped into them.
+      -->
+      <resource>
+        <directory>src/main/resources/static</directory>
+        <targetPath>static</targetPath>
+        <filtering>false</filtering>
+        <includes>
+          <include>assets/**</include>
+          <include>uploads/**</include>
+        </includes>
       </resource>
     </resources>
     <plugins>
@@ -108,9 +125,8 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
           <!--
-            VULN: [A02-Lab6] the .git directory is deliberately kept in the artifact so
-            that it can be downloaded over HTTP.
-            FIX:  exclude VCS metadata from the packaged artifact.
+            FIXED: [A02-Lab6] the .git directory is no longer kept in the artifact,
+            so it can no longer be downloaded over HTTP.
           -->
           <excludes>
             <exclude>

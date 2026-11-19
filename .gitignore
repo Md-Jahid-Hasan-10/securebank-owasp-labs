@@ -30,6 +30,12 @@ Thumbs.db
 backend/core/src/main/resources/static/backup.zip
 *.dump
 
+# Lab 6: an environment file is never committed and never shipped inside the
+# document root. On the vulnerable branch the fake .env is a training fixture
+# that is tracked explicitly; on the fixed branch it is not tracked at all.
+.env
+backend/core/src/main/resources/static/.env
+
 # Lab 22: uploaded files are written at runtime, never committed.
 backend/core/src/main/resources/static/uploads/*
 !backend/core/src/main/resources/static/uploads/.gitkeep

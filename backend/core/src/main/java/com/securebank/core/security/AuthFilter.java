@@ -34,17 +34,18 @@ public class AuthFilter extends OncePerRequestFilter {
      * Endpoints that must never be gated. Everything else requires a valid principal.
      */
     private static boolean isPublic(String path) {
-        // VULN: [A02-Lab6] Sensitive File Exposure - static resources such as /.env,
-        // /.git/config, /backup.zip and /uploads/** are served without authentication.
-        // They are excluded here so that the AuthFilter does not accidentally protect
-        // them, which is exactly the misconfiguration this lab demonstrates.
-        if (path.startsWith("/.env")
-                || path.startsWith("/.git")
-                || path.startsWith("/backup.zip")
-                || path.startsWith("/uploads/")) {
+        // Lab 22 (A08) - uploaded files are public so the upload lab can serve
+        // them back. Unchanged by this fix.
+        if (path.startsWith("/uploads/")) {
             return true;
         }
 
+        // FIXED: [A02-Lab6] Sensitive File Exposure - /.env, /.git/config and
+        // /backup.zip are no longer whitelisted as public. They were reachable by
+        // any anonymous client, which handed over the environment file and the
+        // whole database. They are not served at all any more, and even if one
+        // were reintroduced into a served directory, it would now require a
+        // valid principal.
         return path.startsWith("/api/auth/")
                 || path.startsWith("/api/a05/auth/")
                 || path.startsWith("/api/a06/auth/")
@@ -64,6 +65,7 @@ public class AuthFilter extends OncePerRequestFilter {
                 || path.startsWith("/actuator")
                 || path.startsWith("/h2-console");
     }
+
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,

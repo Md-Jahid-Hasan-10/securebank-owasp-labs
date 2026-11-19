@@ -38,7 +38,10 @@ OUT_PATH = BACKEND_DIR / "core" / "src" / "main" / "resources" / "labs" / "labs.
 # How many lines of context to include around the anchor.
 CONTEXT_LINES = 14
 
-VULN_MARKER = re.compile(r"(?:VULN|FIXED):\s*\[(?P<tag>[A-Z0-9\-]+)\]")
+# The tag looks like A01-Lab1, so the character class has to accept the
+# lowercase letters in "Lab" as well. It previously only allowed A-Z, which
+# meant no marker ever matched and every lab reported an empty tag list.
+VULN_MARKER = re.compile(r"(?:VULN|FIXED):\s*\[(?P<tag>[A-Za-z0-9\-]+)\]")
 
 
 def extract_block(source: str, anchor: str, context: int = CONTEXT_LINES) -> str:

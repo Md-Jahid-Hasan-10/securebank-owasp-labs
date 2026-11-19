@@ -276,15 +276,35 @@ if should_run 5; then
   refute "no session is issued to the new administrator" "$OUT" '"token"'
 fi
 
-# --- Lab 6: exposed files ----------------------------------------------------
+# --- Lab 6: exposed files (FIXED on this branch) ----------------------------
 if should_run 6; then
   lab 6 "Sensitive file exposure"
+  # The environment file must not be reachable by an anonymous client. The
+  # resource handler for it has been removed, so the request falls through to
+  # the SPA / 404 rather than returning the file.
   OUT="$(curl -s "$API/.env")"
-  check "/.env is served" "$OUT" 'JWT_SECRET'
+  refute "/.env is not served" "$OUT" 'JWT_SECRET'
+  refute "/.env does not leak the AWS key" "$OUT" 'AKIAIOSFODNN7EXAMPLE'
+  refute "/.env does not leak the Stripe secret" "$OUT" 'sk_test_4eC39HqLyjWDarjtT1zdp7dc'
+  HTTP="$(curl -s -o /dev/null -w '%{http_code}' "$API/.env")"
+  refute "/.env is not downloadable" "$HTTP" '200'
+  # The same for the repository's git configuration.
   OUT="$(curl -s "$API/.git/config")"
-  check "/.git/config is served" "$OUT" 'securebank-internet-banking.git'
+  refute "/.git/config is not served" "$OUT" 'securebank-internet-banking.git'
+  refute "/.git/config does not leak the remote URL" "$OUT" '[remote "origin"]'
+  HTTP="$(curl -s -o /dev/null -w '%{http_code}' "$API/.git/config")"
+  refute "/.git/config is not downloadable" "$HTTP" '200'
+  # And for the database backup, which used to hand over every user, balance
+  # and password hash.
   HTTP="$(curl -s -o /dev/null -w '%{http_code}' "$API/backup.zip")"
-  check "/backup.zip is served" "$HTTP" '200'
+  refute "/backup.zip is not served" "$HTTP" '200'
+  OUT="$(curl -s "$API/backup.zip")"
+  refute "/backup.zip is not the database dump" "$OUT" 'PGDMP'
+  # The panel endpoint must no longer advertise where the secrets were.
+  OUT="$(curl -s "$API/api/a02/exposed-files")"
+  refute "the panel does not advertise /.env" "$OUT" '"url":"/.env"'
+  refute "the panel does not advertise /.git/config" "$OUT" '"url":"/.git/config"'
+  refute "the panel does not advertise /backup.zip" "$OUT" '"url":"/backup.zip"'
 fi
 
 # --- Lab 7: MD5 hashes ------------------------------------------------------

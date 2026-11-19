@@ -86,11 +86,31 @@ else
   PASS=$((PASS + 1))
 fi
 
-echo "== Lab 6: file exposure =="
-check "/.env is served" "$(curl -s "$API/.env")" 'JWT_SECRET'
-check "/.git/config is served" "$(curl -s "$API/.git/config")" 'securebank-internet-banking.git'
-check "/backup.zip is served" \
-  "$(curl -s -o /dev/null -w '%{http_code}' "$API/backup.zip")" '200'
+echo "== Lab 6: file exposure (fixed on this branch) =="
+WALK_ENV_OUT="$(curl -s "$API/.env")"
+if [[ "$WALK_ENV_OUT" == *'JWT_SECRET'* ]]; then
+  printf '\033[31m  FAIL\033[0m /.env is not served\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m /.env is not served\n'
+  PASS=$((PASS + 1))
+fi
+WALK_GIT_OUT="$(curl -s "$API/.git/config")"
+if [[ "$WALK_GIT_OUT" == *'securebank-internet-banking.git'* ]]; then
+  printf '\033[31m  FAIL\033[0m /.git/config is not served\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m /.git/config is not served\n'
+  PASS=$((PASS + 1))
+fi
+WALK_BACKUP_CODE="$(curl -s -o /dev/null -w '%{http_code}' "$API/backup.zip")"
+if [[ "$WALK_BACKUP_CODE" == '200' ]]; then
+  printf '\033[31m  FAIL\033[0m /backup.zip is not served\n'
+  FAIL=$((FAIL + 1))
+else
+  printf '\033[32m  PASS\033[0m /backup.zip is not served\n'
+  PASS=$((PASS + 1))
+fi
 
 echo "== Lab 7: MD5 =="
 check "GET /api/a04/hashes" \

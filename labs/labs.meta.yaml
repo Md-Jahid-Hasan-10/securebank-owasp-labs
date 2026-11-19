@@ -325,11 +325,18 @@ labs:
       5. Find the MD5 password hashes — crack them in the next lab.
     hint: >-
       The static resource directory is the web root. What was placed in it?
+      Now that the web root is gone, try the same paths again - none of them
+      resolves to a file any more.
     fix: >-
-      Isolate static files in a dedicated directory outside the web root. Never serve
-      `.env` or `.git` from a web server. Use `.gitignore` and point `STATIC_ROOT` at a
-      path that contains no sensitive files. Add a build step that fails if a secret
-      file is detected in the static tree.
+      Static assets are served from a dedicated directory that contains nothing
+      but assets, and nothing is mapped at `/**` any more, so a file dropped into
+      the asset directory is not reachable by default. The explicit `/.env` and
+      `/.git/**` resource handlers have been removed, which restores Spring
+      Boot's built-in refusal to serve dot-prefixed paths, and the three secret
+      paths are no longer on the AuthFilter's public list. The `.env` file is not
+      packaged into the artifact at all and is gitignored, the image no longer
+      contains a `.git` directory, and the database backup is written to
+      `/app/backups` instead of into a served directory.
     source: core/src/main/java/com/securebank/lab/a02/Lab6StaticExposureController.java
     anchors:
       - "public ResponseEntity<?> exposedFiles()"

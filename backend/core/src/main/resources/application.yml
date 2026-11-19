@@ -50,13 +50,14 @@ jwt:
   secret: "secret"
   expiration-seconds: 3600
 
-# VULN: [A02-Lab6] The static resource directory is the web root, so files placed there
-# are served verbatim. Lab 6 ships .env and .git/config here; Lab 22 writes uploads here.
-# FIX:  serve static assets from a dedicated directory outside the web root.
+# FIXED: [A02-Lab6] The static resource directory is no longer the web root. Assets
+# are served from a dedicated directory that contains no secrets, the dot-prefixed
+# resource handlers are gone and the database backup is written outside the web
+# root. Lab 22 still writes uploads into the upload directory on purpose.
 app:
-  # The filesystem directory that is exposed as the web root.
-  web-root: ${APP_WEB_ROOT:static}
-  # Where Lab 22 writes uploaded files. Inside the web root - on purpose.
+  # The filesystem directory that holds static assets. Contains no secrets.
+  asset-dir: ${APP_ASSET_DIR:static/assets}
+  # Where Lab 22 writes uploaded files. Served by its own handler - on purpose.
   upload-dir: ${APP_UPLOAD_DIR:static/uploads}
 
 server.servlet:
