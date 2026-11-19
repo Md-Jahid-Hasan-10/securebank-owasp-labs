@@ -241,8 +241,10 @@ if should_run 7; then
   OUT="$(get "$API/api/a04/crack")"
   refute "alice's password is not cracked in-app" "$OUT" 'password123'
   refute "no password is cracked in-app" "$OUT" '"cracked":{"alice"'
-  # And the hashes themselves are bcrypt in the database, not MD5.
-  OUT="$(get "$API/api/a05/transfers/search?q='+UNION+SELECT+username,password_hash,email,role,id+FROM+users--")"
+  # And the hashes themselves are bcrypt in the database, not MD5. The search
+  # endpoint still returns the hash for a genuine match, so a normal search term
+  # shows what is actually stored.
+  OUT="$(get "$API/api/a05/transfers/search?q=alice")"
   check "the stored hashes are bcrypt" "$OUT" '$2a$12$'
   refute "no MD5 digest survives in the database" "$OUT" '482c811da5d5b4bc6d497ffa98491e38'
   # A legitimate login still works with the seeded password. The login helper
