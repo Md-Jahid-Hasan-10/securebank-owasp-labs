@@ -30,7 +30,12 @@ RUN apt-get update \
     && pip install --no-cache-dir --quiet --break-system-packages pyyaml \
     && python3 scripts/sync-labs.py
 
-RUN cd backend && mvn -q -B -pl core -am package -DskipTests
+# `clean` matters here. The build context is the working tree, so a stale
+# backend/core/target/ from a previous build (e.g. one made on the other branch)
+# is copied in by the COPY above. Maven's package phase does not remove stale
+# output, so orphaned files - such as a Flyway migration that no longer exists in
+# the source tree - would be packed into the jar and still applied at runtime.
+RUN cd backend && mvn -q -B -pl core -am clean package -DskipTests
 
 FROM eclipse-temurin:17-jre-jammy
 WORKDIR /app
